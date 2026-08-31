@@ -154,13 +154,18 @@ class FirebaseDocumentRepository(
         if (displayMode == HomeDocumentDisplayMode.RECENT_ONLY) {
             query = query.limit(if (category.isNullOrBlank() || category == "전체") 10 else 5)
         }
+        // Mapping a snapshot can suspend while resolving Storage URLs. Keep an older local
+        // pending-write snapshot from overwriting a newer server-confirmed snapshot.
+        var latestSnapshotVersion = 0L
         val registration = query
             .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                 if (error != null) {
+                    latestSnapshotVersion += 1
                     trySend(DocumentStream.Error(error.toUserMessage()))
                     return@addSnapshotListener
                 }
                 if (snapshot == null) return@addSnapshotListener
+                val snapshotVersion = ++latestSnapshotVersion
 
                 launch {
                     val mapped = snapshot.documents.mapNotNull { document ->
@@ -168,6 +173,7 @@ class FirebaseDocumentRepository(
                             dto.toFieldDocument(storage) to dto.pendingDeletion
                         }
                     }
+                    if (snapshotVersion != latestSnapshotVersion) return@launch
                     trySend(
                         DocumentStream.Data(
                             documents = mapped.filterNot { it.second }.map { it.first },
@@ -195,14 +201,13 @@ class FirebaseDocumentRepository(
                     return@addSnapshotListener
                 }
                 trySend(
-                    snapshot?.documents.orEmpty()
-                        .mapNotNull { it.toDocumentActivityOrNull() }
-                        .filter { activity ->
-                            isCreatedWithinRecentActivityWindow(
-                                createdAtMillis = activity.createdAt?.toDate()?.time,
-                                nowMillis = currentTimeMillis
-                            )
-                        }
+                    recentActivitiesForDisplay(
+                        activities = snapshot?.documents.orEmpty()
+                            .mapNotNull { it.toDocumentActivityOrNull() },
+                        // Do not reuse the listener start time here. New activities arrive after
+                        // that time and must be visible in the active sharing-status screen.
+                        nowMillis = System.currentTimeMillis()
+                    )
                 )
             }
         awaitClose { registration.remove() }
@@ -461,7 +466,9 @@ private fun DocumentSnapshot.toDtoOrNull(): FirebaseDocumentDto? = runCatching {
         id = getString("id").orEmpty().ifBlank { id },
         title = getString("title").orEmpty(),
         category = getString("category") ?: "기타",
-        createdAt = getTimestamp("createdAt"),
+        // A local write with serverTimestamp() has no confirmed value yet. ESTIMATE keeps
+        // the registering device's new document dated and sorted as newest until confirmation.
+        createdAt = getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
         updatedAt = getTimestamp("updatedAt"),
         source = getString("source") ?: DocumentSource.TEXT.name,
         content = getString("content").orEmpty(),
@@ -537,6 +544,16 @@ internal const val RecentActivityWindowMillis = 30L * 24L * 60L * 60L * 1000L
 
 internal fun isCreatedWithinRecentActivityWindow(createdAtMillis: Long?, nowMillis: Long): Boolean =
     createdAtMillis != null && createdAtMillis in (nowMillis - RecentActivityWindowMillis)..nowMillis
+
+internal fun recentActivitiesForDisplay(
+    activities: List<DocumentActivity>,
+    nowMillis: Long
+): List<DocumentActivity> = activities.filter { activity ->
+    isCreatedWithinRecentActivityWindow(
+        createdAtMillis = activity.createdAt?.toDate()?.time,
+        nowMillis = nowMillis
+    )
+}
 
 internal fun formatRegistrationDate(createdAtMillis: Long?): String = createdAtMillis?.let { millis ->
     DateTimeFormatter.ofPattern("yyyy.MM.dd")
