@@ -1,0 +1,83 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function validDisplayName(name) {
+      return name is string
+        && name.size() > 0
+        && name.size() <= 20
+        && name.matches('.*\\S.*');
+    }
+
+    function hasRegisteredProfile() {
+      return signedIn()
+        && exists(profilePath(request.auth.uid))
+        && validDisplayName(get(profilePath(request.auth.uid)).data.displayName);
+    }
+
+    function validProfileData() {
+      return request.resource.data.keys().hasOnly(['displayName', 'createdAt', 'updatedAt'])
+        && validDisplayName(request.resource.data.displayName);
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list: if false;
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && validProfileData()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && validProfileData()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+
+      match /devices/{deviceId} {
+        function validDeviceData() {
+          return request.resource.data.keys().hasOnly(['token', 'notificationsEnabled', 'updatedAt'])
+            && request.resource.data.token is string
+            && request.resource.data.token.size() > 0
+            && request.resource.data.token.size() <= 4096
+            && request.resource.data.notificationsEnabled == true
+            && request.resource.data.updatedAt == request.time;
+        }
+
+        allow get: if signedIn() && request.auth.uid == uid;
+        allow list: if false;
+        allow create, update: if signedIn()
+          && request.auth.uid == uid
+          && validDeviceData();
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    match /documents/{documentId} {
+      allow read: if hasRegisteredProfile();
+      allow create: if hasRegisteredProfile()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdByName == get(profilePath(request.auth.uid)).data.displayName;
+      allow update: if hasRegisteredProfile()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy', 'createdByName']);
+      allow delete: if hasRegisteredProfile();
+    }
+
+    match /activities/{activityId} {
+      allow read: if hasRegisteredProfile();
+      allow create: if hasRegisteredProfile()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.actorLabel == get(profilePath(request.auth.uid)).data.displayName;
+      allow update, delete: if false;
+    }
+  }
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="firebase_database_url" translatable="false">https://fieldshare-cf760-default-rtdb.europe-west1.firebasedatabase.app</string>
+    <string name="gcm_defaultSenderId" translatable="false">173877115505</string>
+    <string name="google_api_key" translatable="false">AIzaSyAMrp-d1HfYSdlxEfHdF46NVOPJ1SGW4SU</string>
+    <string name="google_app_id" translatable="false">1:173877115505:android:5650b348418eefd4bb39d0</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyAMrp-d1HfYSdlxEfHdF46NVOPJ1SGW4SU</string>
+    <string name="google_storage_bucket" translatable="false">fieldshare-cf760.firebasestorage.app</string>
+    <string name="project_id" translatable="false">fieldshare-cf760</string>
+</resources>

@@ -1,0 +1,6 @@
+/functions/.env
+/functions/.env.*
+/functions/.runtimeconfig.json
+**/*service-account*.json
+*.pem
+*.p12

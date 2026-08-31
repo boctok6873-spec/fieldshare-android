@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Opt-in state and its installation ID must never move to another device. -->
+        <exclude domain="sharedpref" path="fieldshare_notifications.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Device-to-device transfer must also start notifications as opt-in. -->
+        <exclude domain="sharedpref" path="fieldshare_notifications.xml" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "presence": {
+      ".read": "auth != null",
+      "$uid": {
+        "$installationId": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "!newData.exists() || (newData.hasChildren(['online', 'lastSeen', 'deviceType']) && newData.child('online').isBoolean() && newData.child('lastSeen').isNumber() && newData.child('deviceType').isString() && (newData.child('deviceType').val() === 'phone' || newData.child('deviceType').val() === 'tablet' || newData.child('deviceType').val() === 'desktop'))"
+        }
+      }
+    }
+  }
+}

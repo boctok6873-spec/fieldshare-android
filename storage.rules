@@ -1,0 +1,51 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isRegisteredUser() {
+      return isAuthenticated()
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.displayName is string
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.displayName.size() > 0
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.displayName.size() <= 20;
+    }
+
+    function isAllowedUpload() {
+      return request.resource.size <= 20 * 1024 * 1024;
+    }
+
+    function keepsOwnerUid() {
+      return request.resource.metadata.ownerUid == resource.metadata.ownerUid;
+    }
+
+    match /documents/{documentId}/images/{fileName} {
+      allow read: if isRegisteredUser();
+      allow create: if isRegisteredUser()
+        && isAllowedUpload()
+        && request.resource.contentType.matches('image/.*')
+        && request.resource.metadata.ownerUid == request.auth.uid;
+      allow update: if isRegisteredUser()
+        && keepsOwnerUid()
+        && isAllowedUpload()
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isRegisteredUser();
+    }
+
+    match /documents/{documentId}/pdf/{fileName} {
+      allow read: if isRegisteredUser();
+      allow create: if isRegisteredUser()
+        && isAllowedUpload()
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.metadata.ownerUid == request.auth.uid;
+      allow update: if isRegisteredUser()
+        && keepsOwnerUid()
+        && isAllowedUpload()
+        && request.resource.contentType == 'application/pdf';
+      allow delete: if isRegisteredUser();
+    }
+  }
+}

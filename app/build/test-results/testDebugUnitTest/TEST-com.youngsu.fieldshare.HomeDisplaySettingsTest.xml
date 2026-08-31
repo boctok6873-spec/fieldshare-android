@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.youngsu.fieldshare.HomeDisplaySettingsTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-08-31T05:17:11.919Z" hostname="BOCTOK-PC" time="0.011">
+  <properties/>
+  <testcase name="hiddenMode_returnsNoDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.008"/>
+  <testcase name="hiddenMode_keepsMatchingDocumentsForSearchOnly" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
+  <testcase name="allMode_doesNotLimitMatchingDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
+  <testcase name="recentMode_sortsByRegistrationDateDescending" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.001"/>
+  <testcase name="allMode_startsLocalSearchFromOneCharacterWhileOtherModesRequireTwo" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
+  <testcase name="allMode_searchesAllLocalDocumentsWithoutCategoryRestriction" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
+  <testcase name="allMode_filtersAlreadyLoadedDocumentsForCategoryTabs" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
+  <testcase name="recentMode_limitsAllDocumentsToTenAndCategoryToFive" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

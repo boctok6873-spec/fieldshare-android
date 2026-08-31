@@ -1,0 +1,12 @@
+{
+  "name": "fieldshare-functions",
+  "private": true,
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "scripts": { "lint": "eslint .", "test": "node --test" },
+  "dependencies": {
+    "@algolia/client-search": "^5.20.0",
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.1.0"
+  }
+}
