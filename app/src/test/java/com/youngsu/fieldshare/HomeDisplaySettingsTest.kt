@@ -4,6 +4,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeDisplaySettingsTest {
@@ -50,31 +52,69 @@ class HomeDisplaySettingsTest {
     }
 
     @Test
-    fun allMode_searchesAllLocalDocumentsWithoutCategoryRestriction() {
+    fun allMode_usesLocalSearchAfterTheServerHasLoadedAllDocuments() {
         val documents = listOf(
             document("old", "TV", 1).copy(content = "필터 청소"),
             document("new", "냉장고", 3).copy(description = "필터 교체")
         )
+        val stream = DocumentStream.Data(documents, isFromCache = false)
+        val route = homeSearchRoute(
+            homeDisplayMode = HomeDocumentDisplayMode.ALL,
+            isAllDocumentsLoaded = isAllDocumentsLoaded(HomeDocumentDisplayMode.ALL, stream)
+        )
 
         assertEquals(listOf("new", "old"), searchLocalDocuments(documents, "필터").map { it.id })
-        assertEquals(true, usesLocalHomeSearch(HomeDocumentDisplayMode.ALL, "필터"))
-        assertEquals(false, usesLocalHomeSearch(HomeDocumentDisplayMode.RECENT_ONLY, "필터"))
-        assertEquals(false, usesLocalHomeSearch(HomeDocumentDisplayMode.HIDDEN, "필터"))
+        assertTrue(isAllDocumentsLoaded(HomeDocumentDisplayMode.ALL, stream))
+        assertEquals(HomeSearchRoute.LOCAL_ALL_DOCUMENTS, route)
+        assertTrue(usesLocalHomeSearch(route, "필터"))
     }
 
     @Test
-    fun allMode_startsLocalSearchFromOneCharacterWhileOtherModesRequireTwo() {
-        val documents = listOf(
-            document("aircon", "에어컨", 1).copy(content = "에어컨 점검")
+    fun allMode_usesAlgoliaWhileTheServerListIsStillLoading() {
+        val route = homeSearchRoute(
+            homeDisplayMode = HomeDocumentDisplayMode.ALL,
+            isAllDocumentsLoaded = isAllDocumentsLoaded(HomeDocumentDisplayMode.ALL, DocumentStream.Loading)
         )
 
-        assertEquals(1, minimumHomeSearchQueryLength(HomeDocumentDisplayMode.ALL))
-        assertEquals(2, minimumHomeSearchQueryLength(HomeDocumentDisplayMode.RECENT_ONLY))
-        assertEquals(2, minimumHomeSearchQueryLength(HomeDocumentDisplayMode.HIDDEN))
-        assertEquals(listOf("aircon"), searchLocalDocuments(documents, "에").map { it.id })
-        assertEquals(true, usesLocalHomeSearch(HomeDocumentDisplayMode.ALL, "에"))
-        assertEquals(false, usesLocalHomeSearch(HomeDocumentDisplayMode.RECENT_ONLY, "에"))
-        assertEquals(false, usesLocalHomeSearch(HomeDocumentDisplayMode.HIDDEN, "에"))
+        assertEquals(HomeSearchRoute.ALGOLIA, route)
+        assertFalse(usesLocalHomeSearch(route, "검색"))
+    }
+
+    @Test
+    fun allMode_usesAlgoliaWhileAnOnlineCacheSnapshotIsDisplayed() {
+        val stream = DocumentStream.Data(listOf(document("cached", "TV", 1)), isFromCache = true)
+        val route = homeSearchRoute(
+            homeDisplayMode = HomeDocumentDisplayMode.ALL,
+            isAllDocumentsLoaded = isAllDocumentsLoaded(HomeDocumentDisplayMode.ALL, stream)
+        )
+
+        assertFalse(isAllDocumentsLoaded(HomeDocumentDisplayMode.ALL, stream))
+        assertEquals(HomeSearchRoute.ALGOLIA, route)
+        assertFalse(usesLocalHomeSearch(route, "캐시"))
+    }
+
+    @Test
+    fun allMode_usesCachedDocumentsAsLocalFallbackOnlyAfterAlgoliaFails() {
+        val route = homeSearchRoute(
+            homeDisplayMode = HomeDocumentDisplayMode.ALL,
+            isAllDocumentsLoaded = false,
+            hasAlgoliaFailedForCurrentQuery = true,
+            hasCachedDocuments = true
+        )
+
+        assertEquals(HomeSearchRoute.LOCAL_CACHE_FALLBACK, route)
+        assertTrue(usesLocalHomeSearch(route, "캐"))
+    }
+
+    @Test
+    fun allMode_requiresTwoCharactersWhileLoadingAndOneAfterLocalDataIsReady() {
+        assertEquals(2, minimumHomeSearchQueryLength(HomeSearchRoute.ALGOLIA))
+        assertEquals(1, minimumHomeSearchQueryLength(HomeSearchRoute.LOCAL_ALL_DOCUMENTS))
+        assertEquals(1, minimumHomeSearchQueryLength(HomeSearchRoute.LOCAL_CACHE_FALLBACK))
+        assertEquals(
+            "전체 자료 검색은 2글자 이상 입력해 주세요.",
+            homeSearchMinimumQueryMessage(HomeDocumentDisplayMode.ALL, HomeSearchRoute.ALGOLIA)
+        )
     }
 
     @Test

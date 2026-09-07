@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.graphics.Color
 import com.google.firebase.Timestamp
+import java.time.Instant
 import java.util.Date
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,6 +12,37 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DocumentRegistrationDateTest {
+    @Test
+    fun activityDate_formatsTheCreatedTimeInKoreaAsMonthAndDay() {
+        val activity = DocumentActivity(
+            id = "activity-1",
+            action = DocumentActivityAction.CREATED,
+            documentId = "document-1",
+            documentTitle = "새 자료",
+            actorUid = "user-1",
+            actorLabel = "사용자",
+            // 00:30 on September 1 in Korea, which also verifies the fixed Seoul time zone.
+            createdAt = Timestamp(Date(Instant.parse("2026-08-31T15:30:00Z").toEpochMilli()))
+        )
+
+        assertEquals("9월 1일", activityDate(activity))
+    }
+
+    @Test
+    fun activityDate_keepsTheSafeFallbackWhenServerTimeIsUnavailable() {
+        val activity = DocumentActivity(
+            id = "activity-pending",
+            action = DocumentActivityAction.UPDATED,
+            documentId = "document-1",
+            documentTitle = "새 자료",
+            actorUid = "user-1",
+            actorLabel = "사용자",
+            createdAt = null
+        )
+
+        assertEquals("방금 전", activityDate(activity))
+    }
+
     @Test
     fun recentActivityWindow_includesExactThirtyDayBoundaryOnly() {
         val now = 2_000_000_000_000L

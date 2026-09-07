@@ -51,6 +51,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.RotateLeft
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -116,6 +118,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
@@ -129,8 +132,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -138,6 +143,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.IntSize
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -154,7 +160,9 @@ import java.time.LocalDate
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
@@ -294,6 +302,7 @@ private fun FirebaseDocumentApp(
     val repository = remember(currentUserId, currentProfile.displayName) {
         FirebaseDocumentRepository(context.applicationContext, currentUserId, currentProfile.displayName)
     }
+    val thumbnailUrlResolver = remember(repository) { repository::resolveThumbnailUrl }
     val profileRepository = remember(currentUserId) { UserProfileRepository(currentUserId) }
     val notificationManager = remember(currentUserId) {
         PushNotificationManager(context.applicationContext, currentUserId)
@@ -334,9 +343,22 @@ private fun FirebaseDocumentApp(
     }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchState by remember { mutableStateOf<DocumentSearchUiState>(DocumentSearchUiState.Idle) }
+    var algoliaFailedQuery by remember { mutableStateOf<String?>(null) }
+    var activeDocumentCount by remember { mutableStateOf<Long?>(null) }
     val documents = hidePendingDeletionDocuments(
         (stream as? DocumentStream.Data)?.documents.orEmpty(),
         locallyPendingDeletionIds
+    )
+    val allDocumentsLoadedFromServer = isAllDocumentsLoaded(homeDisplayMode, stream)
+    val cachedDocumentStream = stream as? DocumentStream.Data
+    val hasCachedDocuments = homeDisplayMode == HomeDocumentDisplayMode.ALL &&
+        cachedDocumentStream?.isFromCache == true &&
+        documents.isNotEmpty()
+    val searchRoute = homeSearchRoute(
+        homeDisplayMode = homeDisplayMode,
+        isAllDocumentsLoaded = allDocumentsLoadedFromServer,
+        hasAlgoliaFailedForCurrentQuery = algoliaFailedQuery == searchQuery.trim(),
+        hasCachedDocuments = hasCachedDocuments
     )
 
     val enableNotifications = {
@@ -367,21 +389,54 @@ private fun FirebaseDocumentApp(
         }
     }
 
-    LaunchedEffect(repository, searchQuery, homeDisplayMode, if (homeDisplayMode == HomeDocumentDisplayMode.ALL) documents else null) {
+    LaunchedEffect(repository, screen is AppScreen.SyncStatus) {
+        if (screen is AppScreen.SyncStatus) {
+            activeDocumentCount = null
+            repository.fetchActiveDocumentCount()
+                .onSuccess { activeDocumentCount = it }
+                .onFailure { error ->
+                    Log.w("FieldShareSync", "활성 자료 수 집계 실패", error)
+                }
+        }
+    }
+
+    LaunchedEffect(
+        repository,
+        searchQuery,
+        homeDisplayMode,
+        allDocumentsLoadedFromServer,
+        searchRoute,
+        if (usesLocalHomeSearch(searchRoute, searchQuery)) documents else null
+    ) {
         val normalizedQuery = searchQuery.trim()
-        if (normalizedQuery.length < minimumHomeSearchQueryLength(homeDisplayMode)) {
+        if (normalizedQuery.length < minimumHomeSearchQueryLength(searchRoute)) {
             searchState = DocumentSearchUiState.Idle
             return@LaunchedEffect
         }
-        if (usesLocalHomeSearch(homeDisplayMode, normalizedQuery)) {
-            searchState = DocumentSearchUiState.Data(searchLocalDocuments(documents, normalizedQuery))
+        if (usesLocalHomeSearch(searchRoute, normalizedQuery)) {
+            searchState = DocumentSearchUiState.Data(
+                documents = searchLocalDocuments(documents, normalizedQuery),
+                isOfflineCacheFallback = searchRoute == HomeSearchRoute.LOCAL_CACHE_FALLBACK
+            )
             return@LaunchedEffect
         }
         delay(300)
         searchState = DocumentSearchUiState.Loading
-        searchState = repository.searchDocuments(normalizedQuery).fold(
-            onSuccess = { DocumentSearchUiState.Data(it) },
-            onFailure = { DocumentSearchUiState.Error("검색 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.") }
+        val result = repository.searchDocuments(normalizedQuery)
+        currentCoroutineContext().ensureActive()
+        searchState = result.fold(
+            onSuccess = { DocumentSearchUiState.Data(it, hasUnresolvedImagePaths = true) },
+            onFailure = {
+                if (hasCachedDocuments && homeDisplayMode == HomeDocumentDisplayMode.ALL) {
+                    algoliaFailedQuery = normalizedQuery
+                    DocumentSearchUiState.Data(
+                        documents = searchLocalDocuments(documents, normalizedQuery),
+                        isOfflineCacheFallback = true
+                    )
+                } else {
+                    DocumentSearchUiState.Error("검색 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+                }
+            }
         )
     }
     val pendingDeletionDocuments = (stream as? DocumentStream.Data)?.pendingDeletionDocuments.orEmpty()
@@ -440,6 +495,7 @@ private fun FirebaseDocumentApp(
                     onScreenChange(AppScreen.Detail(repository.resolveImageUrls(document)))
                 }
             },
+            resolveThumbnailUrl = thumbnailUrlResolver,
             documentStream = stream,
             syncState = syncState,
             errorMessage = operationError ?: streamError,
@@ -515,7 +571,7 @@ private fun FirebaseDocumentApp(
         AppScreen.SyncStatus -> SyncStatusScreen(
             onBack = { onScreenChange(AppScreen.Home) },
             syncState = syncState,
-            documentCount = documents.size,
+            documentCount = activeDocumentCount,
             activities = activities,
             presence = presence,
             pendingDeletionDocuments = pendingDeletionDocuments,
@@ -586,7 +642,11 @@ enum class FirebaseSyncUiState { CONNECTING, SYNCHRONIZED, OFFLINE_CACHE, ERROR 
 sealed interface DocumentSearchUiState {
     data object Idle : DocumentSearchUiState
     data object Loading : DocumentSearchUiState
-    data class Data(val documents: List<FieldDocument>) : DocumentSearchUiState
+    data class Data(
+        val documents: List<FieldDocument>,
+        val isOfflineCacheFallback: Boolean = false,
+        val hasUnresolvedImagePaths: Boolean = false
+    ) : DocumentSearchUiState
     data class Error(val message: String) : DocumentSearchUiState
 }
 
@@ -938,6 +998,9 @@ internal fun hidePendingDeletionDocuments(
 internal fun contentForDocumentSave(hasAttachment: Boolean, enteredContent: String): String =
     if (hasAttachment) enteredContent else enteredContent.ifBlank { "등록된 내용이 없습니다." }
 
+internal fun activeDocumentCountLabel(documentCount: Long?): String =
+    documentCount?.let { "${it}개" } ?: "—"
+
 internal fun imageContentForDetail(content: String): String? = content
     .takeIf { it.isNotBlank() && it.trim() != "원본 이미지 자료" }
 
@@ -977,7 +1040,7 @@ internal fun homeDocumentsForDisplay(
 
 internal fun searchLocalDocuments(documents: List<FieldDocument>, query: String): List<FieldDocument> {
     val normalizedQuery = query.trim()
-    if (normalizedQuery.length < minimumHomeSearchQueryLength(HomeDocumentDisplayMode.ALL)) return emptyList()
+    if (normalizedQuery.isBlank()) return emptyList()
     return documents
         .filter { document ->
             listOf(
@@ -997,12 +1060,46 @@ private fun homeDocumentComparator(): Comparator<FieldDocument> =
         .thenByDescending { it.date }
         .thenByDescending { it.id }
 
-internal fun minimumHomeSearchQueryLength(displayMode: HomeDocumentDisplayMode): Int =
-    if (displayMode == HomeDocumentDisplayMode.ALL) 1 else 2
+internal enum class HomeSearchRoute {
+    LOCAL_ALL_DOCUMENTS,
+    ALGOLIA,
+    LOCAL_CACHE_FALLBACK
+}
 
-internal fun usesLocalHomeSearch(displayMode: HomeDocumentDisplayMode, query: String): Boolean =
-    displayMode == HomeDocumentDisplayMode.ALL &&
-        query.trim().length >= minimumHomeSearchQueryLength(displayMode)
+internal fun isAllDocumentsLoaded(
+    displayMode: HomeDocumentDisplayMode,
+    stream: DocumentStream
+): Boolean = displayMode == HomeDocumentDisplayMode.ALL &&
+    stream is DocumentStream.Data &&
+    !stream.isFromCache
+
+internal fun homeSearchRoute(
+    homeDisplayMode: HomeDocumentDisplayMode,
+    isAllDocumentsLoaded: Boolean,
+    hasAlgoliaFailedForCurrentQuery: Boolean = false,
+    hasCachedDocuments: Boolean = false
+): HomeSearchRoute = when {
+    homeDisplayMode != HomeDocumentDisplayMode.ALL -> HomeSearchRoute.ALGOLIA
+    isAllDocumentsLoaded -> HomeSearchRoute.LOCAL_ALL_DOCUMENTS
+    hasAlgoliaFailedForCurrentQuery && hasCachedDocuments -> HomeSearchRoute.LOCAL_CACHE_FALLBACK
+    else -> HomeSearchRoute.ALGOLIA
+}
+
+internal fun minimumHomeSearchQueryLength(searchRoute: HomeSearchRoute): Int =
+    if (searchRoute == HomeSearchRoute.ALGOLIA) 2 else 1
+
+internal fun homeSearchMinimumQueryMessage(
+    homeDisplayMode: HomeDocumentDisplayMode,
+    searchRoute: HomeSearchRoute
+): String = if (homeDisplayMode == HomeDocumentDisplayMode.ALL && searchRoute == HomeSearchRoute.ALGOLIA) {
+    "전체 자료 검색은 2글자 이상 입력해 주세요."
+} else {
+    "검색어를 ${minimumHomeSearchQueryLength(searchRoute)}글자 이상 입력해 주세요."
+}
+
+internal fun usesLocalHomeSearch(searchRoute: HomeSearchRoute, query: String): Boolean =
+    searchRoute != HomeSearchRoute.ALGOLIA &&
+        query.trim().length >= minimumHomeSearchQueryLength(searchRoute)
 
 private val sampleDocuments = listOf(
     FieldDocument("aircon-c422", "에어컨 C422 조치방법", "에어컨", "2026-08-23", DocumentSource.TEXT, "C422 에러 발생 시 점검 및 조치 방법 안내\n\n1. 전원 차단 후 5분 이상 대기\n2. 실외기 통신 배선 연결 상태 확인\n3. 이상이 계속되면 서비스 점검 요청", detail = "C422", description = "C422 에러 발생 시 점검 및 조치 방법 안내", thumbnailColor = Color(0xFFE5F2FF), icon = Icons.Default.Thermostat),
@@ -1031,6 +1128,7 @@ fun FieldShareHomeScreen(
     notificationsEnabled: Boolean = false,
     onNotificationsClick: () -> Unit = {},
     onDocumentClick: (FieldDocument) -> Unit = {},
+    resolveThumbnailUrl: suspend (String) -> String? = { imagePath -> imagePath },
     homeDisplayMode: HomeDocumentDisplayMode = HomeDocumentDisplayMode.RECENT_ONLY,
     documentStream: DocumentStream = DocumentStream.Data(documents, false),
     syncState: FirebaseSyncUiState = FirebaseSyncUiState.SYNCHRONIZED,
@@ -1039,6 +1137,12 @@ fun FieldShareHomeScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val hasSearchQuery = searchQuery.isNotBlank()
     val homeDocuments = homeDocumentsForDisplay(documents, selectedCategory, homeDisplayMode, false)
+    val allDocumentsLoaded = isAllDocumentsLoaded(homeDisplayMode, documentStream)
+    val currentSearchRoute = homeSearchRoute(
+        homeDisplayMode = homeDisplayMode,
+        isAllDocumentsLoaded = allDocumentsLoaded
+    )
+    val minimumSearchQueryLength = minimumHomeSearchQueryLength(currentSearchRoute)
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -1160,8 +1264,8 @@ fun FieldShareHomeScreen(
                 )
             }
             when {
-                hasSearchQuery && searchQuery.trim().length < minimumHomeSearchQueryLength(homeDisplayMode) -> item {
-                    FirebaseListMessage("검색어를 ${minimumHomeSearchQueryLength(homeDisplayMode)}글자 이상 입력해 주세요.")
+                hasSearchQuery && searchQuery.trim().length < minimumSearchQueryLength -> item {
+                    FirebaseListMessage(homeSearchMinimumQueryMessage(homeDisplayMode, currentSearchRoute))
                 }
                 hasSearchQuery -> when (searchState) {
                     DocumentSearchUiState.Idle, DocumentSearchUiState.Loading -> item {
@@ -1170,14 +1274,26 @@ fun FieldShareHomeScreen(
                     is DocumentSearchUiState.Error -> item {
                         FirebaseListMessage(searchState.message)
                     }
-                    is DocumentSearchUiState.Data -> when {
-                        searchState.documents.isEmpty() -> item { FirebaseListMessage("검색 조건에 맞는 자료가 없습니다.") }
-                        else -> items(searchState.documents, key = { it.id }) { document ->
-                            DocumentCard(
-                                document,
-                                loadImageThumbnail = homeDisplayMode == HomeDocumentDisplayMode.ALL,
-                                onClick = { onDocumentClick(document) }
-                            )
+                    is DocumentSearchUiState.Data -> {
+                        if (searchState.isOfflineCacheFallback) {
+                            item {
+                                Text(
+                                    "현재 기기에 저장된 자료에서 검색한 결과입니다.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF7E8795)
+                                )
+                            }
+                        }
+                        if (searchState.documents.isEmpty()) {
+                            item { FirebaseListMessage("검색 조건에 맞는 자료가 없습니다.") }
+                        } else {
+                            items(searchState.documents, key = { it.id }) { document ->
+                                DocumentCard(
+                                    document,
+                                    resolveThumbnailUrl = resolveThumbnailUrl,
+                                    onClick = { onDocumentClick(document) }
+                                )
+                            }
                         }
                     }
                 }
@@ -1193,7 +1309,11 @@ fun FieldShareHomeScreen(
                             FirebaseListMessage("등록된 자료가 없습니다. 오른쪽 아래 등록 버튼으로 첫 자료를 추가해 주세요.")
                         }
                         else -> items(homeDocuments, key = { it.id }) { document ->
-                            DocumentCard(document, onClick = { onDocumentClick(document) })
+                            DocumentCard(
+                                document,
+                                resolveThumbnailUrl = resolveThumbnailUrl,
+                                onClick = { onDocumentClick(document) }
+                            )
                         }
                     }
                 }
@@ -1281,7 +1401,7 @@ private fun FirebaseListMessage(message: String, loading: Boolean = false) {
 private fun SyncStatusScreen(
     onBack: () -> Unit,
     syncState: FirebaseSyncUiState,
-    documentCount: Int,
+    documentCount: Long?,
     activities: List<DocumentActivity>,
     presence: PresenceSummary,
     pendingDeletionDocuments: List<FieldDocument> = emptyList(),
@@ -1434,15 +1554,15 @@ private fun SyncStatusCard(syncState: FirebaseSyncUiState) {
 @Composable
 private fun SyncSummaryGrid(
     syncState: FirebaseSyncUiState,
-    documentCount: Int,
+    documentCount: Long?,
     presence: PresenceSummary
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SyncSummaryCard(
                 title = "총 자료",
-                value = "${documentCount}개",
-                caption = "내 Firebase 자료",
+                value = activeDocumentCountLabel(documentCount),
+                caption = "Firebase 서버",
                 icon = Icons.Default.Folder,
                 iconTint = Color(0xFF1460D8),
                 iconBackground = Color(0xFFEAF2FF),
@@ -1451,7 +1571,7 @@ private fun SyncSummaryGrid(
             SyncSummaryCard(
                 title = "접속 중",
                 value = "${presence.onlineUserCount}명",
-                caption = "Presence 기준 접속 중",
+                caption = "Presence 기준",
                 icon = Icons.Default.Group,
                 iconTint = Color(0xFF1460D8),
                 iconBackground = Color(0xFFEAF2FF),
@@ -1476,7 +1596,7 @@ private fun SyncSummaryGrid(
             SyncSummaryCard(
                 title = "연결 디바이스",
                 value = "${presence.onlineDeviceCount}대",
-                caption = "Presence 기준 연결 기기",
+                caption = "Presence 기준",
                 icon = Icons.Default.Devices,
                 iconTint = Color(0xFF078E95),
                 iconBackground = Color(0xFFE4F6F6),
@@ -1585,7 +1705,7 @@ private fun ActivityTimelineItem(activity: DocumentActivity, showConnector: Bool
             Text(activityTitle(activity), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = Ink)
             Text(activity.documentTitle, style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E8795))
         }
-        Text(activityTime(activity), style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E8795))
+        Text(activityDate(activity), style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E8795))
     }
 }
 
@@ -1598,7 +1718,7 @@ private fun ActivityListRow(activity: DocumentActivity) {
             Text(activityTitle(activity), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             Text(activity.documentTitle, style = MaterialTheme.typography.bodySmall, color = Color(0xFF7E8795))
         }
-        Text(activityTime(activity), style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E8795))
+        Text(activityDate(activity), style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E8795))
     }
 }
 
@@ -1620,11 +1740,11 @@ private fun activityColor(activity: DocumentActivity): Color = when (activity.ac
     DocumentActivityAction.DELETED -> Color(0xFFB3261E)
 }
 
-private fun activityTime(activity: DocumentActivity): String = activity.createdAt?.toDate()
+internal fun activityDate(activity: DocumentActivity): String = activity.createdAt?.toDate()
     ?.toInstant()
-    ?.atZone(java.time.ZoneId.systemDefault())
-    ?.toLocalTime()
-    ?.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+    ?.atZone(java.time.ZoneId.of("Asia/Seoul"))
+    ?.toLocalDate()
+    ?.format(java.time.format.DateTimeFormatter.ofPattern("M월 d일"))
     ?: "방금 전"
 
 @Composable
@@ -2364,6 +2484,7 @@ private fun CategoryTabs(
 private fun DocumentCard(
     document: FieldDocument,
     loadImageThumbnail: Boolean = true,
+    resolveThumbnailUrl: suspend (String) -> String? = { imagePath -> imagePath },
     onClick: () -> Unit = {}
 ) {
     Card(
@@ -2376,7 +2497,7 @@ private fun DocumentCard(
         border = BorderStroke(1.dp, BorderGray)
     ) {
         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Thumbnail(document, loadImageThumbnail)
+            Thumbnail(document, loadImageThumbnail, resolveThumbnailUrl)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -2637,12 +2758,9 @@ private fun TextDocumentContent(content: String) {
             border = BorderStroke(1.dp, BorderGray),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
-            Text(
-                text = content,
+            LinkedDocumentText(
+                content = content,
                 modifier = Modifier.padding(18.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                color = Ink,
-                lineHeight = 25.sp
             )
         }
     }
@@ -2749,6 +2867,8 @@ private fun RegistrationImagePreview(imageUri: String?) {
     }
 }
 
+private const val IMAGE_VIEWER_PAN_SPEED_MULTIPLIER = 2f
+
 @Composable
 private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
     val activity = LocalContext.current.findActivity()
@@ -2766,14 +2886,29 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
     var scale by remember { mutableStateOf(1f) }
     var offsetX by remember { mutableStateOf(0f) }
     var offsetY by remember { mutableStateOf(0f) }
+    var rotationDegrees by remember(imageUri) { mutableStateOf(0f) }
+    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+    val isQuarterTurn = ((rotationDegrees % 360f) + 360f) % 360f in setOf(90f, 270f)
+    val imageFrameModifier = if (isQuarterTurn && viewportSize != IntSize.Zero) {
+        with(LocalDensity.current) {
+            Modifier.size(width = viewportSize.height.toDp(), height = viewportSize.width.toDp())
+        }
+    } else {
+        Modifier.fillMaxSize()
+    }
     val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
-        scale = (scale * zoomChange).coerceIn(1f, 5f)
-        if (scale <= 1f) {
+        val newScale = (scale * zoomChange).coerceIn(1f, 5f)
+        scale = newScale
+        if (newScale <= 1f) {
             offsetX = 0f
             offsetY = 0f
         } else {
-            offsetX += panChange.x
-            offsetY += panChange.y
+            val maxOffsetX = viewportSize.width * (newScale - 1f) / 2f
+            val maxOffsetY = viewportSize.height * (newScale - 1f) / 2f
+            offsetX = (offsetX + panChange.x * IMAGE_VIEWER_PAN_SPEED_MULTIPLIER)
+                .coerceIn(-maxOffsetX, maxOffsetX)
+            offsetY = (offsetY + panChange.y * IMAGE_VIEWER_PAN_SPEED_MULTIPLIER)
+                .coerceIn(-maxOffsetY, maxOffsetY)
         }
     }
 
@@ -2785,19 +2920,10 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         if (imageUri != null) {
-            SubcomposeAsyncImage(
-                model = imageUri,
-                contentDescription = "확대 가능한 원본 이미지",
-                contentScale = ContentScale.Fit,
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight()
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offsetX,
-                        translationY = offsetY
-                    )
+                    .fillMaxSize()
+                    .onSizeChanged { viewportSize = it }
                     .transformable(transformableState)
                     .pointerInput(Unit) {
                         detectTapGestures(onDoubleTap = {
@@ -2810,11 +2936,72 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
                             }
                         })
                     },
-                loading = { ImageLoadingPlaceholder() },
-                error = { ImageUnavailablePlaceholder("원본 이미지를 불러올 수 없습니다.") }
-            )
+                contentAlignment = Alignment.Center
+            ) {
+                SubcomposeAsyncImage(
+                    model = imageUri,
+                    contentDescription = "확대 가능한 원본 이미지",
+                    contentScale = ContentScale.Fit,
+                    modifier = imageFrameModifier
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY,
+                            rotationZ = rotationDegrees
+                        ),
+                    loading = { ImageLoadingPlaceholder() },
+                    error = { ImageUnavailablePlaceholder("원본 이미지를 불러올 수 없습니다.") }
+                )
+            }
         } else {
             ImageUnavailablePlaceholder("원본 이미지를 불러올 수 없습니다.")
+        }
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 4.dp)
+                .padding(horizontal = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(28.dp)),
+                horizontalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                IconButton(
+                    onClick = { rotationDegrees -= 90f },
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.RotateLeft,
+                        contentDescription = "원본 이미지 90도 반시계 방향 회전",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                IconButton(
+                    onClick = { rotationDegrees += 90f },
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.RotateRight,
+                        contentDescription = "원본 이미지 90도 시계 방향 회전",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "두 손가락으로 확대·축소 · 두 번 탭하여 확대",
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium
+            )
         }
         IconButton(
             onClick = onClose,
@@ -2826,16 +3013,6 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
         ) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 화면", tint = Color.White)
         }
-        Text(
-            text = "두 손가락으로 확대·축소 · 두 번 탭하여 확대",
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 28.dp)
-                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium
-        )
     }
 }
 
@@ -2950,7 +3127,11 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 @Composable
-private fun Thumbnail(document: FieldDocument, loadImage: Boolean = true) {
+private fun Thumbnail(
+    document: FieldDocument,
+    loadImage: Boolean = true,
+    resolveThumbnailUrl: suspend (String) -> String? = { imagePath -> imagePath }
+) {
     Box(
         modifier = Modifier
             .size(width = 96.dp, height = 104.dp)
@@ -2958,9 +3139,20 @@ private fun Thumbnail(document: FieldDocument, loadImage: Boolean = true) {
             .background(document.thumbnailColor),
         contentAlignment = Alignment.Center
     ) {
-        if (loadImage && document.imageUri != null) {
+        // A caller can explicitly opt out of thumbnail loading without starting Storage work.
+        val imagePath = document.imageUri.takeIf { loadImage }
+        val imageUrl by produceState<String?>(
+            initialValue = null,
+            key1 = imagePath,
+            key2 = resolveThumbnailUrl
+        ) {
+            if (imagePath != null) {
+                value = resolveThumbnailUrl(imagePath)
+            }
+        }
+        if (loadImage && imageUrl != null) {
             SubcomposeAsyncImage(
-                model = document.imageUri,
+                model = imageUrl,
                 contentDescription = "${document.title} 썸네일",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
@@ -3067,7 +3259,7 @@ private fun SyncStatusPreview() {
         SyncStatusScreen(
             onBack = {},
             syncState = FirebaseSyncUiState.SYNCHRONIZED,
-            documentCount = 0,
+            documentCount = 0L,
             activities = emptyList(),
             presence = PresenceSummary()
         )

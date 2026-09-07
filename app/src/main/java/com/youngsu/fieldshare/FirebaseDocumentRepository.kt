@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.ui.graphics.Color
 import com.google.firebase.Timestamp
+import com.google.firebase.firestore.AggregateSource
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -25,10 +26,11 @@ import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 /** Firestore wire format. File fields contain Storage paths, never device-local URIs. */
@@ -93,6 +95,9 @@ class FirebaseDocumentRepository(
     private val functions = FirebaseFunctions.getInstance()
     private val documents = firestore.collection("documents")
     private val activities = firestore.collection("activities")
+    // A repository lives for the current signed-in Compose tree. Remember both successful and
+    // failed resolutions so cards do not repeatedly ask Storage for the same thumbnail path.
+    private val thumbnailUrlCache = ConcurrentHashMap<String, CompletableDeferred<ThumbnailUrlResolution>>()
 
     /**
      * Runs the authenticated Algolia Callable search, then reads only the matched Firestore
@@ -115,7 +120,7 @@ class FirebaseDocumentRepository(
         val documentsById = snapshots.mapNotNull { snapshot ->
             snapshot.toDtoOrNull()
                 ?.takeUnless { it.pendingDeletion }
-                ?.let { dto -> dto.toFieldDocument(storage, resolveImageUrls = false) }
+                ?.let { dto -> dto.toListFieldDocument() }
                 ?.let { document -> document.id to document }
         }.toMap()
         ids.mapNotNull(documentsById::get)
@@ -128,6 +133,16 @@ class FirebaseDocumentRepository(
         (result?.get("count") as? Number)?.toInt() ?: 0
     }
 
+    /** Returns the server-authoritative count of documents that are still active. */
+    suspend fun fetchActiveDocumentCount(): Result<Long> = runCatching {
+        documents
+            .whereEqualTo("pendingDeletion", false)
+            .count()
+            .get(AggregateSource.SERVER)
+            .await()
+            .count
+    }
+
     /** Converts Storage paths to download URLs only after a user opens a document detail. */
     suspend fun resolveImageUrls(document: FieldDocument): FieldDocument {
         val resolved = document.imageUris.map { imageUri ->
@@ -135,6 +150,21 @@ class FirebaseDocumentRepository(
             else runCatching { storage.reference.child(imageUri).downloadUrl.await().toString() }.getOrElse { imageUri }
         }
         return document.copy(imageUri = resolved.firstOrNull(), imageUris = resolved)
+    }
+
+    /** Resolves only a visible card's first image; the list snapshot itself keeps Storage paths. */
+    suspend fun resolveThumbnailUrl(imagePath: String): String? {
+        if (imagePath.startsWith("http://") || imagePath.startsWith("https://")) return imagePath
+        val createdResolution = CompletableDeferred<ThumbnailUrlResolution>()
+        val resolution = thumbnailUrlCache.putIfAbsent(imagePath, createdResolution) ?: createdResolution
+        if (resolution === createdResolution) {
+            createdResolution.complete(
+                runCatching {
+                    ThumbnailUrlResolution.Success(storage.reference.child(imagePath).downloadUrl.await().toString())
+                }.getOrElse { ThumbnailUrlResolution.Failure }
+            )
+        }
+        return (resolution.await() as? ThumbnailUrlResolution.Success)?.url
     }
 
     fun observeDocuments(
@@ -154,36 +184,32 @@ class FirebaseDocumentRepository(
         if (displayMode == HomeDocumentDisplayMode.RECENT_ONLY) {
             query = query.limit(if (category.isNullOrBlank() || category == "전체") 10 else 5)
         }
-        // Mapping a snapshot can suspend while resolving Storage URLs. Keep an older local
-        // pending-write snapshot from overwriting a newer server-confirmed snapshot.
-        var latestSnapshotVersion = 0L
         val registration = query
             .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                 if (error != null) {
-                    latestSnapshotVersion += 1
                     trySend(DocumentStream.Error(error.toUserMessage()))
                     return@addSnapshotListener
                 }
                 if (snapshot == null) return@addSnapshotListener
-                val snapshotVersion = ++latestSnapshotVersion
-
-                launch {
-                    val mapped = snapshot.documents.mapNotNull { document ->
-                        document.toDtoOrNull()?.let { dto ->
-                            dto.toFieldDocument(storage) to dto.pendingDeletion
-                        }
-                    }
-                    if (snapshotVersion != latestSnapshotVersion) return@launch
-                    trySend(
-                        DocumentStream.Data(
-                            documents = mapped.filterNot { it.second }.map { it.first },
-                            isFromCache = snapshot.metadata.isFromCache,
-                            pendingDeletionDocuments = mapped
-                                .filter { (_, pendingDeletion) -> pendingDeletion }
-                                .map { it.first }
-                        )
-                    )
+                // With no cached documents (for example, a first installation), retain the
+                // existing loading state until Firestore supplies a server snapshot.
+                if (snapshot.metadata.isFromCache && snapshot.documents.isEmpty()) {
+                    return@addSnapshotListener
                 }
+                // Do not await Storage here: a Firestore cache snapshot can now reach the home
+                // screen immediately, and the later server snapshot naturally replaces it.
+                val mapped = snapshot.documents.mapNotNull { document ->
+                    document.toDtoOrNull()?.let { dto -> dto.toListFieldDocument() to dto.pendingDeletion }
+                }
+                trySend(
+                    DocumentStream.Data(
+                        documents = mapped.filterNot { it.second }.map { it.first },
+                        isFromCache = snapshot.metadata.isFromCache,
+                        pendingDeletionDocuments = mapped
+                            .filter { (_, pendingDeletion) -> pendingDeletion }
+                            .map { it.first }
+                    )
+                )
             }
         awaitClose { registration.remove() }
     }
@@ -256,7 +282,7 @@ class FirebaseDocumentRepository(
                     activityMap(DocumentActivityAction.CREATED, documentId, upload.document.title)
                 )
             }.commit().await()
-            FirebaseDocumentDto(
+            val createdDocument = FirebaseDocumentDto(
                 id = documentId,
                 title = upload.document.title,
                 category = upload.document.category,
@@ -269,7 +295,10 @@ class FirebaseDocumentRepository(
                 searchableText = upload.searchableText,
                 createdBy = currentUserId,
                 createdByName = currentUserDisplayName
-            ).toFieldDocument(storage)
+            ).toListFieldDocument()
+            // create() immediately opens the detail screen, unlike observeDocuments(), so
+            // resolve the newly uploaded image paths only for this returned document.
+            resolveImageUrls(createdDocument)
         } catch (error: Throwable) {
             // Firestore write failures can leave uploaded objects. Best-effort cleanup is safe here.
             uploadedReferences.forEach { reference -> runCatching { reference.delete().await() } }
@@ -496,14 +525,8 @@ private fun DocumentSnapshot.toDocumentActivityOrNull(): DocumentActivity? = run
     )
 }.getOrNull()
 
-private suspend fun FirebaseDocumentDto.toFieldDocument(
-    storage: FirebaseStorage,
-    resolveImageUrls: Boolean = true
-): FieldDocument {
-    val imageUris = imagePaths.map { path ->
-        if (!resolveImageUrls) path
-        else runCatching { storage.reference.child(path).downloadUrl.await().toString() }.getOrElse { path }
-    }
+/** Pure Firestore-list mapping: image fields deliberately remain Storage paths. */
+internal fun FirebaseDocumentDto.toListFieldDocument(): FieldDocument {
     val sourceValue = runCatching { DocumentSource.valueOf(source) }.getOrDefault(DocumentSource.TEXT)
     val statusValue = runCatching { OcrStatus.valueOf(ocrStatus) }.getOrDefault(OcrStatus.NOT_REQUESTED)
     val presentation = categoryPresentation(category, sourceValue)
@@ -515,8 +538,8 @@ private suspend fun FirebaseDocumentDto.toFieldDocument(
         createdAtMillis = createdAt?.toDate()?.time,
         source = sourceValue,
         content = content,
-        imageUri = imageUris.firstOrNull(),
-        imageUris = imageUris,
+        imageUri = imagePaths.firstOrNull(),
+        imageUris = imagePaths,
         pdfUri = pdfPath,
         ocrStatus = statusValue,
         detail = title.take(16),
@@ -527,6 +550,11 @@ private suspend fun FirebaseDocumentDto.toFieldDocument(
         createdBy = createdBy,
         createdByName = displayCreatorName(createdByName)
     )
+}
+
+private sealed interface ThumbnailUrlResolution {
+    data class Success(val url: String) : ThumbnailUrlResolution
+    data object Failure : ThumbnailUrlResolution
 }
 
 internal fun displayCreatorName(createdByName: String?): String =

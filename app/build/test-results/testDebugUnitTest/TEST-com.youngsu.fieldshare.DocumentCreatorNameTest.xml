@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.DocumentCreatorNameTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-08-31T05:17:11.815Z" hostname="BOCTOK-PC" time="0.013">
+<testsuite name="com.youngsu.fieldshare.DocumentCreatorNameTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-02T13:06:56.808Z" hostname="BOCTOK-PC" time="0.025">
   <properties/>
-  <testcase name="displayCreatorName_usesAnonymousFallbackForLegacyDocuments" classname="com.youngsu.fieldshare.DocumentCreatorNameTest" time="0.013"/>
+  <testcase name="displayCreatorName_usesAnonymousFallbackForLegacyDocuments" classname="com.youngsu.fieldshare.DocumentCreatorNameTest" time="0.025"/>
   <testcase name="displayCreatorName_trimsStoredName" classname="com.youngsu.fieldshare.DocumentCreatorNameTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
