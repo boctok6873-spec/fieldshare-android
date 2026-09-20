@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.DocumentListMappingTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:38:21.132Z" hostname="BOCTOK-PC" time="0.09">
+<testsuite name="com.youngsu.fieldshare.DocumentListMappingTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:59:51.027Z" hostname="BOCTOK-PC" time="0.077">
   <properties/>
-  <testcase name="listMapping_keepsStoragePathsWithoutResolvingDownloadUrls" classname="com.youngsu.fieldshare.DocumentListMappingTest" time="0.09"/>
+  <testcase name="listMapping_keepsStoragePathsWithoutResolvingDownloadUrls" classname="com.youngsu.fieldshare.DocumentListMappingTest" time="0.077"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

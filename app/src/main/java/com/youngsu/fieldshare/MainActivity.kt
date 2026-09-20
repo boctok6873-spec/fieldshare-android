@@ -2586,20 +2586,53 @@ private fun CategoryTabs(
     ) {
         categories.forEach { category ->
             val selected = category == selectedCategory
+            val isPrivate = category == PrivateCategory
             Surface(
                 modifier = Modifier.clickable { onCategorySelected(category) },
                 shape = CircleShape,
-                color = if (selected) SamsungBlue else Color.White,
-                contentColor = if (selected) Color.White else Ink,
-                border = if (selected) null else BorderStroke(1.dp, Color.White.copy(alpha = 0.75f)),
+                color = when {
+                    selected && isPrivate -> SamsungBlueDark
+                    selected -> SamsungBlue
+                    isPrivate -> SamsungBlueLight.copy(alpha = 0.72f)
+                    else -> Color.White
+                },
+                contentColor = when {
+                    selected -> Color.White
+                    isPrivate -> SamsungBlueDark.copy(alpha = 0.82f)
+                    else -> Ink
+                },
+                border = when {
+                    selected -> null
+                    isPrivate -> BorderStroke(1.dp, SamsungBlue.copy(alpha = 0.28f))
+                    else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.75f))
+                },
                 shadowElevation = if (selected) 0.dp else 2.dp
             ) {
-                Text(
-                    text = category,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+                if (isPrivate) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = category,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
+                        )
+                    }
+                } else {
+                    Text(
+                        text = category,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }

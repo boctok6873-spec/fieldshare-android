@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.HomeDisplaySettingsTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:38:21.340Z" hostname="BOCTOK-PC" time="0.033">
+<testsuite name="com.youngsu.fieldshare.HomeDisplaySettingsTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:59:51.170Z" hostname="BOCTOK-PC" time="0.017">
   <properties/>
-  <testcase name="hiddenMode_returnsNoDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.018"/>
-  <testcase name="hiddenMode_keepsMatchingDocumentsForSearchOnly" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.001"/>
+  <testcase name="hiddenMode_returnsNoDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.008"/>
+  <testcase name="hiddenMode_keepsMatchingDocumentsForSearchOnly" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
   <testcase name="allMode_usesAlgoliaWhileTheServerListIsStillLoading" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.003"/>
-  <testcase name="allMode_doesNotLimitMatchingDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.001"/>
-  <testcase name="recentMode_sortsByRegistrationDateDescending" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.002"/>
+  <testcase name="allMode_doesNotLimitMatchingDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.002"/>
+  <testcase name="recentMode_sortsByRegistrationDateDescending" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.001"/>
   <testcase name="allMode_usesAlgoliaWhileAnOnlineCacheSnapshotIsDisplayed" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
-  <testcase name="allMode_usesLocalSearchAfterTheServerHasLoadedAllDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.001"/>
+  <testcase name="allMode_usesLocalSearchAfterTheServerHasLoadedAllDocuments" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
   <testcase name="allMode_filtersAlreadyLoadedDocumentsForCategoryTabs" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
-  <testcase name="recentMode_limitsAllDocumentsToTenAndCategoryToFive" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.002"/>
+  <testcase name="recentMode_limitsAllDocumentsToTenAndCategoryToFive" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.001"/>
   <testcase name="allMode_usesCachedDocumentsAsLocalFallbackOnlyAfterAlgoliaFails" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
   <testcase name="allMode_requiresTwoCharactersWhileLoadingAndOneAfterLocalDataIsReady" classname="com.youngsu.fieldshare.HomeDisplaySettingsTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
