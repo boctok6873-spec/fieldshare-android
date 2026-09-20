@@ -120,7 +120,11 @@ private fun DriveProgress(repository: DriveConnectionRepository, state: DriveUiS
         Text(it, style = MaterialTheme.typography.bodySmall,
             color = if (state.messageIsError) MaterialTheme.colorScheme.error else Color.Unspecified)
     }
-    if (state.syncing) Text("Drive 자료를 불러오는 중입니다. 확인되는 자료부터 표시합니다.", style = MaterialTheme.typography.bodySmall)
+    if (state.syncing) Text(
+        if (state.initialListReady) "Drive 자료를 백그라운드에서 검증 중입니다. 확인된 자료는 계속 사용할 수 있습니다."
+        else "Drive 자료를 불러오는 중이며, 확인되는 자료부터 표시합니다.",
+        style = MaterialTheme.typography.bodySmall
+    )
     state.syncError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     if (deleteRetryVisible(state)) {
         Text(if (state.deleteRequiresReauthorization) "자료 삭제 정리에 Drive 재인증이 필요합니다." else "자료 삭제 동기화 실패 · 재시도",
@@ -226,6 +230,9 @@ internal fun PrivateDocumentDetailScreen(
     var title by remember(selected.revision) { mutableStateOf(selected.title) }
     var content by remember(selected.revision) { mutableStateOf(selected.content) }
     var confirmDelete by remember(selected.revision) { mutableStateOf(false) }
+    if (!selected.detailsLoaded) {
+        LaunchedEffect(selected.fileId) { repository.hydrateDetails(selected) }
+    }
     BackHandler(enabled = !state.busy) { onBack() }
 
     if (confirmDelete) {

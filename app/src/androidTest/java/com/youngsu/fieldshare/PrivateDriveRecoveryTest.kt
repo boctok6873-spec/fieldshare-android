@@ -26,7 +26,7 @@ class PrivateDriveRecoveryTest {
                 remote.fail = null
                 PrivateDriveSync(remote, restarted).sync {}
                 val successful = PrivateDriveStore(dir)
-                assertTrue(successful.initialSyncComplete); assertTrue(successful.lastSync > 0)
+                assertTrue(successful.initialSyncComplete); assertTrue(successful.initialListReady); assertTrue(successful.lastSync > 0)
                 assertEquals("stable", successful.checkpoint)
             } finally { dir.deleteRecursively() }
         }
@@ -58,6 +58,7 @@ class PrivateDriveRecoveryTest {
         val dir = directory()
         try {
             val store = PrivateDriveStore(dir).apply { checkpoint = "old"; lastSync = 123; initialSyncComplete = true; save() }
+            assertTrue(PrivateDriveStore(dir).initialListReady)
             val file = File(dir, "metadata.json")
             val json = JSONObject(file.readText()).apply { remove("initialSyncComplete") }
             file.writeText(json.toString())

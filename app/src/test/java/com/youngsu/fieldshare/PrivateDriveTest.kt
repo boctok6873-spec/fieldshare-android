@@ -93,6 +93,37 @@ class PrivateDriveTest {
         assertEquals(2, cache.revisions.size)
     }
 
+    @Test fun summaryListBecomesReadyBeforeInitialVerificationCompletes() = runBlocking {
+        val cache = MemoryCache(); val api = FakeApi()
+        val first = doc(id = "first", revision = "r1").copy(fileId = "first")
+        api.pages[null] = DrivePage(listOf(summaryFile(first)), null)
+        api.bodies["first"] = first.json().toString().toByteArray()
+        val states = mutableListOf<Pair<Boolean, Boolean>>()
+        PrivateDriveSync(api, cache).sync { states += cache.initialListReady to cache.initialSyncComplete }
+        assertTrue(states.any { ready -> ready.first && !ready.second })
+        assertTrue(cache.initialListReady); assertTrue(cache.initialSyncComplete)
+    }
+
+    @Test fun initialSummaryHydrationUsesAtMostFourConcurrentReadsAndBatchesSaves() = runBlocking {
+        val cache = MemoryCache(); val api = FakeApi().apply { readDelayMs = 5 }
+        val files = (0 until 12).map { index ->
+            doc(id = "doc-$index", revision = "rev-$index").copy(fileId = "meta-$index")
+        }
+        api.pages[null] = DrivePage(files.map(::summaryFile), null)
+        files.forEach { document -> api.bodies[document.fileId] = document.json().toString().toByteArray() }
+        val metrics = PrivateSyncMetrics()
+        PrivateDriveSync(api, cache, metrics).sync {}
+        assertTrue(metrics.snapshot().maxConcurrentReads <= 4)
+        assertTrue(cache.saveCount < files.size)
+        assertTrue(cache.initialSyncComplete)
+    }
+
+    @Test fun completedLegacySnapshotImpliesInitialListReady() {
+        assertTrue(persistedInitialListReady(JSONObject().put("initialSyncComplete", true), true))
+        assertFalse(persistedInitialListReady(JSONObject().put("initialSyncComplete", false), false))
+        assertFalse(persistedInitialListReady(JSONObject().put("initialSyncComplete", true).put("initialListReady", false), true))
+    }
+
     @Test fun privateDeleteSyncButtonDisablesUntilCleanupAndRestoresAfterward() {
         val deleting = DriveUiState(deleting = true, pendingSave = true, pendingSyncStatus = PrivateSyncStatus.WAITING)
         assertEquals("자료 삭제중", privateSyncButtonLabel(deleting)); assertFalse(privateSyncButtonEnabled(deleting))
@@ -530,11 +561,13 @@ class PrivateDriveTest {
         override var checkpoint: String? = null
         override var lastSync = 0L
         override var initialSyncComplete = false
+        override var initialListReady = false
+        var saveCount = 0
         override val revisions = linkedMapOf<String, PrivateDocument>()
         override val versions = linkedMapOf<String, String>()
         override val cleanup = linkedSetOf<String>()
         override val lineages = linkedMapOf<String, PrivateLineage>()
-        override fun save() {}
+        override fun save() { saveCount++ }
     }
     private class FakeApi : PrivateDriveApi {
         val pages = mutableMapOf<String?, DrivePage>()
@@ -548,13 +581,24 @@ class PrivateDriveTest {
         var failCreate: String? = null
         var failRead: String? = null
         var readFailureStatus = 503
+        var readDelayMs = 0L
+        private var activeReads = 0
+        var maxConcurrentReads = 0
         override suspend fun list(query: String, page: String?) = pages[page] ?: throw DriveFailure(503)
         override suspend fun startToken() = "start"
         override suspend fun changes(page: String): DrivePage {
             if (page == "expired") throw DriveFailure(410)
             return changePages[page] ?: DrivePage(emptyList(), null, "next")
         }
-        override suspend fun read(id: String): ByteArray { reads += id; if (id == failRead) throw DriveFailure(readFailureStatus); return bodies.getValue(id) }
+        override suspend fun read(id: String): ByteArray {
+            synchronized(this) { activeReads++; maxConcurrentReads = maxOf(maxConcurrentReads, activeReads) }
+            try {
+                reads += id
+                if (readDelayMs > 0) kotlinx.coroutines.delay(readDelayMs)
+                if (id == failRead) throw DriveFailure(readFailureStatus)
+                return bodies.getValue(id)
+            } finally { synchronized(this) { activeReads-- } }
+        }
         override suspend fun generateId() = "generated"
         override suspend fun create(id: String, metadata: JSONObject, bytes: ByteArray?, mime: String) {
             creates++; created += id; onCreate?.invoke(id); if (id == failCreate) throw DriveFailure(503)

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.DocumentRegistrationDateTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:59:51.108Z" hostname="BOCTOK-PC" time="0.051">
+<testsuite name="com.youngsu.fieldshare.DocumentRegistrationDateTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-20T07:07:55.623Z" hostname="BOCTOK-PC" time="0.078">
   <properties/>
-  <testcase name="allMode_includesOldAndLegacyDocumentsWithoutCreatedAt" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.029"/>
-  <testcase name="registrationDate_usesKoreanReadableFormatAndHandlesMissingTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.008"/>
-  <testcase name="recentActivityWindow_includesExactThirtyDayBoundaryOnly" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.006"/>
+  <testcase name="allMode_includesOldAndLegacyDocumentsWithoutCreatedAt" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.028"/>
+  <testcase name="registrationDate_usesKoreanReadableFormatAndHandlesMissingTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.027"/>
+  <testcase name="recentActivityWindow_includesExactThirtyDayBoundaryOnly" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.008"/>
   <testcase name="allMode_sortsDocumentWithTimestampBeforeLegacyDocumentWithoutTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.001"/>
-  <testcase name="activityDate_formatsTheCreatedTimeInKoreaAsMonthAndDay" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.006"/>
-  <testcase name="recentActivitiesForDisplay_includesActivityCreatedAfterListenerStarted" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.001"/>
+  <testcase name="activityDate_formatsTheCreatedTimeInKoreaAsMonthAndDay" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.012"/>
+  <testcase name="recentActivitiesForDisplay_includesActivityCreatedAfterListenerStarted" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.0"/>
   <testcase name="activityDate_keepsTheSafeFallbackWhenServerTimeIsUnavailable" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

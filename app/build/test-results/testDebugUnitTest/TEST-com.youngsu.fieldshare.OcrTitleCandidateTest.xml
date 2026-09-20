@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.OcrTitleCandidateTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:59:51.220Z" hostname="BOCTOK-PC" time="0.008">
+<testsuite name="com.youngsu.fieldshare.OcrTitleCandidateTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-09-20T07:07:55.782Z" hostname="BOCTOK-PC" time="0.011">
   <properties/>
-  <testcase name="selectOcrTitleCandidate_truncatesLongTitleNaturally" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.007"/>
+  <testcase name="selectOcrTitleCandidate_truncatesLongTitleNaturally" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.009"/>
   <testcase name="selectOcrTitleCandidate_returnsNullForBlankOcr" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.0"/>
-  <testcase name="selectOcrTitleCandidate_usesTopTextFromFirstImage" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.0"/>
+  <testcase name="selectOcrTitleCandidate_usesTopTextFromFirstImage" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.001"/>
   <testcase name="autoTitleIfEligible_doesNotOverwriteUserTitle" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.0"/>
   <testcase name="selectOcrTitleCandidate_ignoresLaterImages" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>

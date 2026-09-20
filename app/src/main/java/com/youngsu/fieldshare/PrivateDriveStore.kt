@@ -4,6 +4,41 @@ import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+
+internal data class PrivateSyncMetricsSnapshot(
+    val summaryListingMs: Long = 0,
+    val metadataHydrationMs: Long = 0,
+    val lineageVerificationMs: Long = 0,
+    val changesReplayMs: Long = 0,
+    val totalFullSyncMs: Long = 0,
+    val maxConcurrentReads: Int = 0
+)
+
+/** Non-sensitive, testable timings for the initial sync pipeline. */
+internal class PrivateSyncMetrics {
+    @Volatile var summaryListingMs = 0L
+    @Volatile var metadataHydrationMs = 0L
+    @Volatile var lineageVerificationMs = 0L
+    @Volatile var changesReplayMs = 0L
+    @Volatile var totalFullSyncMs = 0L
+    private val activeReads = AtomicInteger(0)
+    private val maxReads = AtomicInteger(0)
+
+    suspend fun <T> read(action: suspend () -> T): T {
+        val active = activeReads.incrementAndGet()
+        maxReads.updateAndGet { maxOf(it, active) }
+        return try { action() } finally { activeReads.decrementAndGet() }
+    }
+
+    fun snapshot() = PrivateSyncMetricsSnapshot(summaryListingMs, metadataHydrationMs,
+        lineageVerificationMs, changesReplayMs, totalFullSyncMs, maxReads.get())
+}
 
 /** Stored under noBackupFilesDir; atomic snapshots include checkpoint and metadata together. */
 internal interface PrivateMetadataCache {
@@ -11,6 +46,7 @@ internal interface PrivateMetadataCache {
     var checkpoint: String?
     var lastSync: Long
     var initialSyncComplete: Boolean
+    var initialListReady: Boolean
     val revisions: MutableMap<String, PrivateDocument>
     val versions: MutableMap<String, String>
     val cleanup: MutableSet<String>
@@ -24,6 +60,7 @@ internal class PrivateDriveStore(override val directory: File) : PrivateMetadata
     override var checkpoint: String? = null
     override var lastSync: Long = 0
     override var initialSyncComplete: Boolean = false
+    override var initialListReady: Boolean = false
     override val revisions = linkedMapOf<String, PrivateDocument>()
     override val versions = linkedMapOf<String, String>()
     override val cleanup = linkedSetOf<String>()
@@ -35,6 +72,7 @@ internal class PrivateDriveStore(override val directory: File) : PrivateMetadata
             checkpoint = json.optString("checkpoint").takeIf { it.isNotBlank() }
             lastSync = json.optLong("lastSync")
             initialSyncComplete = json.optBoolean("initialSyncComplete", false)
+            initialListReady = persistedInitialListReady(json, initialSyncComplete)
             // Legacy checkpoints are not evidence that the changes replay ever finished.
             if (!json.has("initialSyncComplete")) checkpoint = null
             val a = json.getJSONArray("documents")
@@ -50,12 +88,13 @@ internal class PrivateDriveStore(override val directory: File) : PrivateMetadata
             json.optJSONArray("lineages")?.let { entries -> repeat(entries.length()) {
                 val lineage = PrivateLineage.parse(entries.getJSONObject(it)); lineages[lineage.fileId] = lineage
             } }
-        }.onFailure { checkpoint = null; initialSyncComplete = false; revisions.clear(); versions.clear(); lineages.clear() }
+        }.onFailure { checkpoint = null; initialSyncComplete = false; initialListReady = false; revisions.clear(); versions.clear(); lineages.clear() }
     }
 
     override fun save() {
         val json = JSONObject().put("checkpoint", checkpoint ?: "").put("lastSync", lastSync)
             .put("initialSyncComplete", initialSyncComplete)
+            .put("initialListReady", initialListReady)
             .put("lineages", JSONArray(lineages.values.map { it.json() }))
             .put("cleanup", JSONArray(cleanup)).put("documents", JSONArray(revisions.map { (id, doc) ->
                 JSONObject().put("fileId", id).put("version", versions[id] ?: "").put("remoteState", doc.remoteState.name).put("document", doc.json())
@@ -66,7 +105,15 @@ internal class PrivateDriveStore(override val directory: File) : PrivateMetadata
     }
 }
 
-internal class PrivateDriveSync(private val api: PrivateDriveApi, private val store: PrivateMetadataCache) {
+internal fun persistedInitialListReady(json: JSONObject, initialSyncComplete: Boolean): Boolean =
+    if (json.has("initialListReady")) json.optBoolean("initialListReady", false) else initialSyncComplete
+
+internal class PrivateDriveSync(
+    private val api: PrivateDriveApi,
+    private val store: PrivateMetadataCache,
+    private val metrics: PrivateSyncMetrics = PrivateSyncMetrics()
+) {
+    internal fun metricsSnapshot() = metrics.snapshot()
     private val appQuery = "appProperties has { key='app' and value='$DriveMarker' }"
     suspend fun folder(): String {
         val folders = mutableListOf<String>()
@@ -103,6 +150,93 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
             store.initialSyncComplete = previousComplete; store.lastSync = previousTime; throw e
         }
         progress()
+    }
+
+    private data class HydratedMetadata(val fileId: String, val version: String, val document: PrivateDocument)
+    private data class HydratedLineage(val fileId: String, val lineage: PrivateLineage)
+    private class InitialVerificationFailure(count: Int) : Exception("Drive 자료 검증에 실패한 항목 ${count}건이 있습니다. 재시도해 주세요.")
+
+    private suspend fun <T> captureRead(action: suspend () -> T): Result<T> = try {
+        Result.success(action())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    private suspend fun readMetadata(file: JSONObject): HydratedMetadata? {
+        val id = file.getString("id")
+        val properties = file.optJSONObject("appProperties") ?: return null
+        if (properties.optString("kind") != "metadata") return null
+        val version = file.optString("version")
+        val current = store.revisions[id]
+        if (!file.optBoolean("trashed") && current?.detailsLoaded == true) return null
+        val document = metrics.read {
+            val document = PrivateDocument.parse(JSONObject(String(api.read(id))), id)
+            require(document.id == properties.getString("documentId")) { "개인 자료 메타데이터가 일치하지 않습니다." }
+            document
+        }
+        return HydratedMetadata(id, version, document.copy(
+            remoteState = if (file.optBoolean("trashed")) PrivateRemoteState.TRASHED else PrivateRemoteState.LEGACY_UNVERIFIED,
+            thumbnailId = properties.optString("listThumbnailId"), detailsLoaded = true
+        ))
+    }
+
+    private suspend fun readLineage(file: JSONObject): HydratedLineage? {
+        val id = file.getString("id")
+        val properties = file.optJSONObject("appProperties") ?: return null
+        if (properties.optString("kind") != "lineage") return null
+        val lineage = metrics.read {
+            val value = PrivateLineage.parse(JSONObject(String(api.read(id))))
+            require(value.ledgerId == id && value.documentId == properties.getString("documentId"))
+            value
+        }
+        return HydratedLineage(lineage.fileId, lineage)
+    }
+
+    private suspend fun hydrateInBatches(
+        metadataFiles: List<JSONObject>,
+        lineageFiles: List<JSONObject>,
+        progress: () -> Unit
+    ) {
+        val failures = mutableListOf<Throwable>()
+        var applied = 0
+        val metadataStarted = System.nanoTime()
+        coroutineScope {
+            metadataFiles.chunked(4).forEach { batch ->
+                batch.map { file -> async(Dispatchers.IO) { captureRead { readMetadata(file) } } }
+                    .awaitAll().forEach { result ->
+                        result.fold(
+                            onSuccess = { it?.let { value -> store.revisions[value.fileId] = value.document; store.versions[value.fileId] = value.version } },
+                            onFailure = { failures += it }
+                        )
+                        applied++
+                    }
+                if (applied % 10 == 0) { store.save(); progress() }
+            }
+        }
+        metrics.metadataHydrationMs = (System.nanoTime() - metadataStarted) / 1_000_000
+
+        val lineageStarted = System.nanoTime()
+        coroutineScope {
+            lineageFiles.chunked(4).forEach { batch ->
+                batch.map { file -> async(Dispatchers.IO) { captureRead { readLineage(file) } } }
+                    .awaitAll().forEach { result ->
+                        result.fold(
+                            onSuccess = { it?.let { value ->
+                                store.lineages[value.fileId] = value.lineage
+                                store.revisions.putIfAbsent(value.fileId, value.lineage.placeholder())
+                            } },
+                            onFailure = { failures += it }
+                        )
+                        applied++
+                    }
+                if (applied % 10 == 0) { store.save(); progress() }
+            }
+        }
+        metrics.lineageVerificationMs = (System.nanoTime() - lineageStarted) / 1_000_000
+        store.save(); progress()
+        if (failures.isNotEmpty()) throw InitialVerificationFailure(failures.size)
     }
     private suspend fun accept(file: JSONObject, summaryOnly: Boolean = false) {
         val id = file.getString("id")
@@ -145,6 +279,7 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
                 return
             }
         }
+        if (summaryOnly) return
         if (store.versions[id] == version && store.revisions[id]?.detailsLoaded == true && store.revisions[id]?.remoteState in
             listOf(PrivateRemoteState.AVAILABLE, PrivateRemoteState.LEGACY_UNVERIFIED)) return
         val document = PrivateDocument.parse(JSONObject(String(api.read(id))), id)
@@ -178,37 +313,59 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
         }
     }
     private suspend fun full(progress: () -> Unit) {
+        val fullStarted = System.nanoTime()
+        val start = api.startToken()
+        try {
         store.initialSyncComplete = false
+        store.initialListReady = false
         store.checkpoint = null
         store.save(); progress()
         // Capture before listing so changes made during pagination are replayed, never skipped.
-        val start = api.startToken()
         val seen = mutableSetOf<String>()
         val metadataFiles = mutableListOf<JSONObject>()
         val lineageFiles = mutableListOf<JSONObject>()
+        val listingStarted = System.nanoTime()
         var page: String? = null
-        do {
-            val result = api.list("$appQuery and (appProperties has { key='kind' and value='metadata' } or appProperties has { key='kind' and value='lineage' })", page)
-            for (file in result.files) {
-                seen += file.getString("id")
-                when (file.optJSONObject("appProperties")?.optString("kind")) {
-                    "metadata" -> { metadataFiles += file; accept(file, summaryOnly = true) }
-                    "lineage" -> lineageFiles += file
-                }
-                store.save(); progress()
+            try {
+                do {
+                    val result = api.list("$appQuery and (appProperties has { key='kind' and value='metadata' } or appProperties has { key='kind' and value='lineage' })", page)
+                    for (file in result.files) {
+                        seen += file.getString("id")
+                        when (file.optJSONObject("appProperties")?.optString("kind")) {
+                            "metadata" -> { metadataFiles += file; accept(file, summaryOnly = true) }
+                            "lineage" -> lineageFiles += file
+                        }
+                    }
+                    // One durable write and one UI publish per Drive page.
+                    store.save(); progress()
+                    page = result.next
+                } while (page != null)
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Exception) {
+                // Preserve the old partial-cache behavior for legacy metadata if pagination
+                // itself fails, without delaying the normal summary listing path.
+                runCatching { hydrateInBatches(metadataFiles, emptyList(), progress) }
+                throw failure
             }
-            page = result.next
-        } while (page != null)
-        // Only after every page has produced its lightweight rows do we read JSON and lineage.
-        metadataFiles.forEach { file -> accept(file); hydrate(file); store.save(); progress() }
-        lineageFiles.forEach { file -> accept(file); store.save(); progress() }
         store.revisions.keys.filter { it !in seen }.forEach { markMissing(it, PrivateRemoteState.MISSING) }
         store.lineages.entries.removeAll { it.value.ledgerId !in seen }
+        metrics.summaryListingMs = (System.nanoTime() - listingStarted) / 1_000_000
+        store.initialListReady = true
+        store.save(); progress()
+
+        // Summary rows are now visible. JSON and lineage reads happen afterwards, four at a time.
+        hydrateInBatches(metadataFiles, lineageFiles, progress)
         reconcileEvidence()
+        store.save(); progress()
         store.checkpoint = start; store.save()
         incremental(progress)
+        } finally {
+            metrics.totalFullSyncMs = (System.nanoTime() - fullStarted) / 1_000_000
+        }
     }
     private suspend fun incremental(progress: () -> Unit) {
+        val replayStarted = System.nanoTime()
         var page = checkNotNull(store.checkpoint)
         do {
             val result = api.changes(page)
@@ -230,6 +387,7 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
             store.save(); progress()
             page = result.next ?: break
         } while (true)
+        metrics.changesReplayMs = (System.nanoTime() - replayStarted) / 1_000_000
     }
 
     suspend fun retryCleanup() {

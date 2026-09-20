@@ -6,29 +6,26 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.compose.BackHandler
-import androidx.compose.material3.FilterChip
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,10 +36,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -51,19 +47,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Devices
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
@@ -71,12 +68,11 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LaptopMac
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
@@ -84,73 +80,72 @@ import androidx.compose.material.icons.filled.TabletAndroid
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.WbSunny
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.IntSize
 import androidx.core.content.FileProvider
-import androidx.core.content.ContextCompat
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import coil.compose.SubcomposeAsyncImage
+import com.google.firebase.auth.FirebaseAuth
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.youngsu.fieldshare.ui.theme.BorderGray
 import com.youngsu.fieldshare.ui.theme.FieldShareTheme
 import com.youngsu.fieldshare.ui.theme.Ink
@@ -159,21 +154,16 @@ import com.youngsu.fieldshare.ui.theme.SamsungBlueDark
 import com.youngsu.fieldshare.ui.theme.SamsungBlueLight
 import com.youngsu.fieldshare.ui.theme.SoftGray
 import com.youngsu.fieldshare.ui.theme.SuccessGreen
-import java.time.LocalDate
-import java.io.File
-import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
-import com.google.firebase.auth.FirebaseAuth
-import coil.compose.SubcomposeAsyncImage
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -722,7 +712,9 @@ sealed interface DocumentSearchUiState {
 
 @Composable
 private fun FirebaseStartupState(message: String, onRetry: (() -> Unit)? = null) {
-    Box(modifier = Modifier.fillMaxSize().background(SoftGray), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(SoftGray), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
             if (onRetry == null) CircularProgressIndicator(color = SamsungBlue)
             else Icon(Icons.Default.Info, contentDescription = null, tint = SamsungBlue, modifier = Modifier.size(36.dp))
@@ -1468,7 +1460,9 @@ private fun FirebaseListMessage(message: String, loading: Boolean = false) {
         border = BorderStroke(1.dp, BorderGray)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(28.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -1706,11 +1700,15 @@ private fun SyncSummaryCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 11.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier.size(40.dp).background(iconBackground, RoundedCornerShape(12.dp)),
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(iconBackground, RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, contentDescription = title, tint = iconTint, modifier = Modifier.size(25.dp))
@@ -1765,7 +1763,9 @@ private fun RecentSyncActivitySection(activities: List<DocumentActivity>, onShow
 private fun ActivityTimelineItem(activity: DocumentActivity, showConnector: Boolean) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Box(
-            modifier = Modifier.width(40.dp).height(54.dp),
+            modifier = Modifier
+                .width(40.dp)
+                .height(54.dp),
             contentAlignment = Alignment.TopCenter
         ) {
             if (showConnector) {
@@ -1778,7 +1778,9 @@ private fun ActivityTimelineItem(activity: DocumentActivity, showConnector: Bool
                 )
             }
             Box(
-                modifier = Modifier.size(28.dp).background(activityColor(activity).copy(alpha = 0.14f), CircleShape),
+                modifier = Modifier
+                    .size(28.dp)
+                    .background(activityColor(activity).copy(alpha = 0.14f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(activityIcon(activity), contentDescription = activityTitle(activity), tint = activityColor(activity), modifier = Modifier.size(16.dp))
@@ -1841,7 +1843,9 @@ private fun ConnectedDeviceSection(presence: PresenceSummary) {
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (presence.onlineDeviceCount == 0) {
@@ -2372,7 +2376,9 @@ internal fun DocumentRegistrationScreen(
                     )
                 },
                 enabled = !isRestoringDraft && !isImageOptimizing && !isOcrExtracting && !isSaving && attachmentPreparationError == null,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SamsungBlue)
             ) {
@@ -2415,7 +2421,9 @@ private fun RegisterMethodCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(vertical = 16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -2592,8 +2600,8 @@ private fun CategoryTabs(
                 shape = CircleShape,
                 color = when {
                     selected && isPrivate -> SamsungBlueDark
-                    selected -> SamsungBlue
-                    isPrivate -> SamsungBlueLight.copy(alpha = 0.72f)
+                    selected -> SamsungBlueDark
+                    isPrivate -> SamsungBlueLight
                     else -> Color.White
                 },
                 contentColor = when {
@@ -2603,7 +2611,7 @@ private fun CategoryTabs(
                 },
                 border = when {
                     selected -> null
-                    isPrivate -> BorderStroke(1.dp, SamsungBlue.copy(alpha = 0.28f))
+                    isPrivate -> BorderStroke(1.dp, SamsungBlue.copy(alpha = 0.40f))
                     else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.75f))
                 },
                 shadowElevation = if (selected) 0.dp else 2.dp
@@ -2739,7 +2747,9 @@ private fun TextDocumentEditScreen(
             Button(
                 onClick = { onSave(title, category, content) },
                 enabled = !isSaving,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SamsungBlue)
             ) {
                 if (isSaving) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
@@ -2957,7 +2967,9 @@ private fun OriginalImagePage(imageUri: String?, onClick: (String) -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = imageUri != null && !imageFailed, onClick = { imageUri?.let(onClick) }),
+            .clickable(
+                enabled = imageUri != null && !imageFailed,
+                onClick = { imageUri?.let(onClick) }),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         border = BorderStroke(1.dp, BorderGray),
@@ -3187,7 +3199,9 @@ private fun ImageLoadingPlaceholder() {
 @Composable
 private fun ImageUnavailablePlaceholder(message: String) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 42.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 42.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF8A94A6), modifier = Modifier.size(34.dp))
@@ -3368,11 +3382,15 @@ private fun SyncStatusBar(syncState: FirebaseSyncUiState) {
     Surface(color = Color.White, shadowElevation = 6.dp) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
-                    modifier = Modifier.size(26.dp).background(Color(0xFFE5F6EA), CircleShape),
+                    modifier = Modifier
+                        .size(26.dp)
+                        .background(Color(0xFFE5F6EA), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     if (syncState == FirebaseSyncUiState.CONNECTING) {

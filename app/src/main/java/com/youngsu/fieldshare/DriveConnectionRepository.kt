@@ -42,6 +42,7 @@ internal data class DriveUiState(
     val syncing: Boolean = false,
     val syncError: String? = null,
     val complete: Boolean = false,
+    val initialListReady: Boolean = false,
     val lastSync: Long = 0,
     val documents: List<PrivateDocument> = emptyList(),
     val message: String? = null,
@@ -217,6 +218,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
         val foreground = (pending + legacy).maxByOrNull { it.document.modified }
         mutable.value = state.value.copy(documents = privateHeads(displayed),
             complete = local.initialSyncComplete, lastSync = local.lastSync,
+            initialListReady = local.initialListReady,
             pendingSave = pending.isNotEmpty() || legacy.isNotEmpty() || File(local.directory, "pending.json").exists(),
             pendingSyncStatus = foreground?.status, pendingSyncError = foreground?.error,
             deleting = deletePlan != null,
@@ -320,6 +322,19 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             mutable.value = state.value.copy(message = null, messageIsError = false)
         }
         return result
+    }
+
+    /** Loads one summary-only row on demand when the user opens it before background hydrate finishes. */
+    suspend fun hydrateDetails(document: PrivateDocument): Result<Unit> = operation { local ->
+        val current = local.revisions[document.fileId] ?: document
+        if (current.detailsLoaded) return@operation
+        val loaded = PrivateDocument.parse(JSONObject(String(api.read(document.fileId))), document.fileId)
+        require(loaded.id == document.id) { "개인 자료 메타데이터가 일치하지 않습니다." }
+        local.revisions[document.fileId] = loaded.copy(
+            thumbnailId = current.thumbnailId,
+            remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
+            detailsLoaded = true
+        )
     }
 
     /** Pinning is an immutable metadata revision, queued identically to an offline text edit. */
