@@ -95,6 +95,9 @@ internal data class PrivateDocument(
 /** Builds a safe, content-free list item from Drive appProperties without downloading JSON. */
 internal fun privateSummaryFromProperties(fileId: String, properties: JSONObject): PrivateDocument? {
     if (properties.optString("app") != DriveMarker || properties.optString("kind") != "metadata") return null
+    // These fields make the summary a safe head/tombstone candidate. Legacy rows that do not
+    // carry them stay hidden until their JSON has been verified.
+    if (!properties.has("listParents") || !properties.has("listDeleted") || !properties.has("listPinned")) return null
     val id = properties.optString("listDocumentId", properties.optString("documentId"))
     val revision = properties.optString("listRevision")
     val title = properties.optString("listTitle")
@@ -111,6 +114,7 @@ internal fun privateSummaryFromProperties(fileId: String, properties: JSONObject
         modified = properties.optLong("listModified"),
         fileId = fileId,
         remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
+        deleted = properties.optString("listDeleted").toBoolean(),
         pinned = properties.optString("listPinned").toBoolean(),
         thumbnailId = properties.optString("listThumbnailId"),
         detailsLoaded = false
@@ -187,7 +191,7 @@ internal fun showsPinnedPrivateDocument(document: PrivateDocument): Boolean =
 internal fun searchPrivateDocuments(documents: List<PrivateDocument>, query: String): List<PrivateDocument> {
     fun normalize(value: String) = value.replace(Regex("\\s+"), " ").trim()
     val term = normalize(query)
-    return documents.filter { (!it.deleted || it.remoteState != PrivateRemoteState.AVAILABLE) && (term.isEmpty() ||
+    return documents.filter { !it.deleted && (term.isEmpty() ||
         listOf(it.title, it.content, it.category, it.ocr).any { value -> normalize(value).contains(term, true) }) }
         .sortedWith(compareByDescending(::showsPinnedPrivateDocument).thenByDescending { it.modified })
 }

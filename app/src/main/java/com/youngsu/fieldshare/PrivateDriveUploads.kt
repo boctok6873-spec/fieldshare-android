@@ -81,11 +81,13 @@ internal fun privateFileMetadata(folder: String, documentId: String, kind: Strin
     .put("name", name).put("parents", JSONArray(listOf(folder)))
     .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", kind)
         .put("documentId", truncateDriveProperty(documentId)).apply {
-        if (document != null && kind == "metadata") {
+        if (document != null) {
             put("listDocumentId", truncateDriveProperty(document.id)).put("listRevision", truncateDriveProperty(document.revision))
-                .put("listTitle", truncateDriveProperty(document.title)).put("listCategory", truncateDriveProperty(document.category))
+        }
+        if (document != null && kind == "metadata") {
+            put("listTitle", truncateDriveProperty(document.title)).put("listCategory", truncateDriveProperty(document.category))
                 .put("listCreated", document.created.toString()).put("listModified", document.modified.toString())
-                .put("listPinned", document.pinned.toString())
+                .put("listPinned", document.pinned.toString()).put("listDeleted", document.deleted.toString())
                 .put("listParents", summarizeDriveParents(document.parents))
             if (document.thumbnailId.isNotBlank()) put("listThumbnailId", truncateDriveProperty(document.thumbnailId))
         }
@@ -153,7 +155,7 @@ internal class PrivateDriveUploads(private val api: PrivateDriveApi, private val
         // The commit receipt is written last: a cancelled, never-published revision must not
         // suppress its parent. Neither upload alone is reported as a completed save.
         ensureQueueActive(file)
-        api.create(lineage.ledgerId, privateFileMetadata(folder, document.id, "lineage", "${document.id}-${document.revision}.lineage.json"), lineage.json().toString().toByteArray())
+        api.create(lineage.ledgerId, privateFileMetadata(folder, document.id, "lineage", "${document.id}-${document.revision}.lineage.json", document), lineage.json().toString().toByteArray())
         local.lineages[document.fileId] = lineage
         local.revisions[document.fileId] = document
         local.cleanup.addAll(plan.optJSONArray("cleanup")?.strings().orEmpty())

@@ -37,7 +37,7 @@ class PrivateDriveTest {
                 .put("listRevision", "rev-3").put("listTitle", "냉장고 점검")
                 .put("listCategory", "냉장고").put("listCreated", "10")
                 .put("listModified", "30").put("listPinned", "true")
-                .put("listThumbnailId", "thumb-1").put("listParents", "old-revision")
+                .put("listDeleted", "false").put("listThumbnailId", "thumb-1").put("listParents", "old-revision")
         )
         assertNotNull(summary)
         assertEquals("냉장고 점검", summary!!.title)
@@ -77,6 +77,13 @@ class PrivateDriveTest {
         assertTrue(gate.tryAcquire())
     }
 
+    @Test fun activeSyncStoreWinsOverQueueObserverReload() {
+        val active = PrivateDriveStore(Files.createTempDirectory("active-store").toFile())
+        val refreshed = PrivateDriveStore(Files.createTempDirectory("refreshed-store").toFile())
+        assertSame(active, authoritativePrivateStore(active, refreshed))
+        assertSame(refreshed, authoritativePrivateStore(null, refreshed))
+    }
+
     @Test fun fullSyncPublishesFirstSummaryBeforeLaterDrivePages() = runBlocking {
         val cache = MemoryCache()
         val first = doc(id = "first", revision = "r1").copy(fileId = "first")
@@ -104,6 +111,25 @@ class PrivateDriveTest {
         assertTrue(cache.initialListReady); assertTrue(cache.initialSyncComplete)
     }
 
+    @Test fun summaryStageHidesOldRevisionAndDeletedTombstone() = runBlocking {
+        val cache = MemoryCache(); val current = doc(id = "active", revision = "new", parents = listOf("old"))
+            .copy(fileId = "meta-new", pinned = true)
+        val old = doc(id = "active", revision = "old").copy(fileId = "meta-old")
+        val deleted = doc(id = "removed", revision = "gone", parents = emptyList()).copy(fileId = "meta-gone", deleted = true)
+        val api = FakeApi().apply {
+            pages[null] = DrivePage(listOf(summaryFile(old), summaryFile(current), summaryFile(deleted)), null)
+            bodies[old.fileId] = old.json().toString().toByteArray()
+            bodies[current.fileId] = current.json().toString().toByteArray()
+            bodies[deleted.fileId] = deleted.json().toString().toByteArray()
+        }
+        var visibleDuringSummary = emptyList<PrivateDocument>()
+        PrivateDriveSync(api, cache).sync {
+            if (cache.initialListReady.not()) visibleDuringSummary = searchPrivateDocuments(privateHeads(cache.revisions.values), "")
+        }
+        assertEquals(listOf("new"), visibleDuringSummary.map { it.revision })
+        assertEquals(listOf("new"), searchPrivateDocuments(privateHeads(cache.revisions.values), "").map { it.revision })
+    }
+
     @Test fun initialSummaryHydrationUsesAtMostFourConcurrentReadsAndBatchesSaves() = runBlocking {
         val cache = MemoryCache(); val api = FakeApi().apply { readDelayMs = 5 }
         val files = (0 until 12).map { index ->
@@ -116,6 +142,65 @@ class PrivateDriveTest {
         assertTrue(metrics.snapshot().maxConcurrentReads <= 4)
         assertTrue(cache.saveCount < files.size)
         assertTrue(cache.initialSyncComplete)
+    }
+
+    @Test fun workerPoolStartsNextTargetBeforeSlowReadFinishes() = runBlocking {
+        val cache = MemoryCache(); val api = FakeApi()
+        val documents = (0 until 5).map { index ->
+            doc(id = if (index == 0) "slow" else "fast-$index", revision = "rev-$index")
+                .copy(fileId = "meta-$index", modified = if (index == 0) 100 else 1)
+        }
+        api.pages[null] = DrivePage(documents.map(::summaryFile), null)
+        documents.forEach { api.bodies[it.fileId] = it.json().toString().toByteArray() }
+        api.readDelayById["meta-0"] = 250
+        val metrics = PrivateSyncMetrics()
+        PrivateDriveSync(api, cache, metrics).sync {}
+        val slowFinished = api.readEvents.indexOf("finish:meta-0")
+        val fifthStarted = api.readEvents.indexOf("start:meta-4")
+        assertTrue("a completed fast worker must take the fifth target before the slow read ends",
+            fifthStarted >= 0 && slowFinished >= 0 && fifthStarted < slowFinished)
+        assertTrue(metrics.snapshot().maxConcurrentReads <= 4)
+    }
+
+    @Test fun currentHeadMetadataAndLineageStartBeforeNonHeadTargets() = runBlocking {
+        val cache = MemoryCache(); val api = FakeApi()
+        val head = doc(id = "active", revision = "head", parents = listOf("old"))
+            .copy(fileId = "meta-head", schemaVersion = 2, lineageId = "ledger-head", modified = 100, pinned = true)
+        val old = doc(id = "active", revision = "old").copy(fileId = "meta-old", schemaVersion = 2, lineageId = "ledger-old")
+        val deleted = doc(id = "deleted", revision = "tombstone")
+            .copy(fileId = "meta-deleted", schemaVersion = 2, lineageId = "ledger-deleted", deleted = true)
+        val hidden = doc(id = "hidden", revision = "hidden", parents = emptyList()).copy(
+            fileId = "meta-hidden", schemaVersion = 2, lineageId = "ledger-hidden", deleted = true)
+        val files = listOf(
+            summaryFile(old), lineageFile(PrivateLineage.of(old)), summaryFile(deleted),
+            lineageFile(PrivateLineage.of(hidden)), summaryFile(head), lineageFile(PrivateLineage.of(head)),
+            summaryFile(hidden), lineageFile(PrivateLineage.of(deleted))
+        )
+        val parsedSummaries = files.mapNotNull { file ->
+            privateSummaryFromProperties(file.getString("id"), file.getJSONObject("appProperties"))
+        }
+        assertEquals("head", privateHeads(parsedSummaries).first { !it.deleted }.revision)
+        assertEquals("head", privateHeads(listOf(old, head, deleted, hidden)).first { !it.deleted }.revision)
+        assertEquals("active", PrivateLineage.of(head).documentId)
+        api.pages[null] = DrivePage(files, null)
+        listOf(head, old, deleted, hidden).forEach { document ->
+            api.bodies[document.fileId] = document.json().toString().toByteArray()
+            api.bodies[document.lineageId] = PrivateLineage.of(document).json().toString().toByteArray()
+        }
+
+        val metrics = PrivateSyncMetrics()
+        PrivateDriveSync(api, cache, metrics).sync {}
+        val startPositions = api.readEvents.withIndex().filter { it.value.startsWith("start:") }
+            .associate { it.value.removePrefix("start:") to it.index }
+        val headTargets = listOf("meta-head", "ledger-head")
+        val nonHeadTargets = listOf("meta-old", "ledger-old", "meta-deleted", "ledger-deleted", "meta-hidden", "ledger-hidden")
+        headTargets.forEach { headId ->
+            nonHeadTargets.forEach { otherId ->
+                assertTrue("$headId must start before $otherId events=${api.readEvents}",
+                    startPositions.getValue(headId) < startPositions.getValue(otherId))
+            }
+        }
+        assertTrue(metrics.snapshot().maxConcurrentReads <= 4)
     }
 
     @Test fun completedLegacySnapshotImpliesInitialListReady() {
@@ -318,7 +403,7 @@ class PrivateDriveTest {
         PrivateDriveSync(api, cache).sync { progress++ }
         assertEquals(PrivateRemoteState.MISSING, cache.revisions["f1"]?.remoteState)
         assertTrue(cache.revisions.containsKey("f2"))
-        assertEquals(listOf("f1", "f2"), api.reads)
+        assertEquals(setOf("f1", "f2"), api.reads.toSet())
         assertEquals("next", cache.checkpoint); assertTrue(progress >= 3)
     }
 
@@ -540,7 +625,13 @@ class PrivateDriveTest {
             .put("documentId", document.id).put("listDocumentId", document.id)
             .put("listRevision", document.revision).put("listTitle", document.title)
             .put("listCategory", document.category).put("listCreated", document.created.toString())
-            .put("listModified", document.modified.toString()).put("listPinned", document.pinned.toString()))
+            .put("listModified", document.modified.toString()).put("listPinned", document.pinned.toString())
+            .put("listDeleted", document.deleted.toString())
+            .put("listParents", document.parents.joinToString(PRIVATE_PARENT_SEPARATOR)))
+
+    private fun lineageFile(lineage: PrivateLineage) = JSONObject().put("id", lineage.ledgerId).put("version", "1")
+        .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", "lineage")
+            .put("documentId", lineage.documentId).put("listRevision", lineage.revision))
 
     @Test fun externalRemovalMustNotPromoteAncestor() = runBlocking {
         val cache = MemoryCache().apply {
@@ -582,6 +673,10 @@ class PrivateDriveTest {
         var failRead: String? = null
         var readFailureStatus = 503
         var readDelayMs = 0L
+        val readDelayById = mutableMapOf<String, Long>()
+        val readStarted = mutableListOf<String>()
+        val readFinished = mutableListOf<String>()
+        val readEvents = mutableListOf<String>()
         private var activeReads = 0
         var maxConcurrentReads = 0
         override suspend fun list(query: String, page: String?) = pages[page] ?: throw DriveFailure(503)
@@ -591,13 +686,17 @@ class PrivateDriveTest {
             return changePages[page] ?: DrivePage(emptyList(), null, "next")
         }
         override suspend fun read(id: String): ByteArray {
-            synchronized(this) { activeReads++; maxConcurrentReads = maxOf(maxConcurrentReads, activeReads) }
+            synchronized(this) {
+                activeReads++; maxConcurrentReads = maxOf(maxConcurrentReads, activeReads)
+                readStarted += id; readEvents += "start:$id"
+            }
             try {
                 reads += id
-                if (readDelayMs > 0) kotlinx.coroutines.delay(readDelayMs)
+                val delayMs = readDelayById[id] ?: readDelayMs
+                if (delayMs > 0) kotlinx.coroutines.delay(delayMs)
                 if (id == failRead) throw DriveFailure(readFailureStatus)
                 return bodies.getValue(id)
-            } finally { synchronized(this) { activeReads-- } }
+            } finally { synchronized(this) { activeReads--; readFinished += id; readEvents += "finish:$id" } }
         }
         override suspend fun generateId() = "generated"
         override suspend fun create(id: String, metadata: JSONObject, bytes: ByteArray?, mime: String) {

@@ -64,6 +64,10 @@ internal class BackgroundSyncGate {
     @Synchronized fun release() { active = false }
 }
 
+/** An in-flight sync snapshot is authoritative over a store reloaded by a queue observer. */
+internal fun authoritativePrivateStore(activeSync: PrivateDriveStore?, current: PrivateDriveStore?): PrivateDriveStore? =
+    activeSync ?: current
+
 /** This component intentionally has no Firebase, profile, push, presence, or analytics dependencies. */
 internal class DriveConnectionRepository(private val context: Context, apiOverride: PrivateDriveApi? = null) {
     private val root = File(context.noBackupFilesDir, "private-drive").apply { mkdirs() }
@@ -76,6 +80,8 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     private var accessToken: String? = null
     private var tokenTime = 0L
     private var store: PrivateDriveStore? = null
+    /** Non-null while a foreground/background sync owns the in-memory snapshot. */
+    @Volatile private var activeSyncStore: PrivateDriveStore? = null
     private val mutable = MutableStateFlow(DriveUiState())
     val state = mutable.asStateFlow()
     private val api = apiOverride ?: DriveApi { freshToken() }
@@ -91,7 +97,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             store = PrivateDriveStore(File(root, key))
             mutable.value = DriveUiState(email = identity.getString("email"), accountKey = key,
                 message = "Drive 권한 확인 대기 · 동기화된 자료는 오프라인 검색 가능")
-            publish()
+            publish(store)
             // A journal survives process death. Silent authorization, when still granted, lets
             // a restarted app resume it without making the user reopen the registration screen.
             observeQueue(key); enqueueQueueWork(key)
@@ -147,7 +153,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
                 catch (e: Exception) { identityFile.failWrite(output); throw e }
                 mutable.value = DriveUiState(email = email, accountKey = key, verified = true)
                 val resumedDelete = resumeDeleteCleanup(store!!)
-                publish(); observeQueue(key)
+                publish(store); observeQueue(key)
                 if (resumedDelete) enqueueDeleteWork(key) else enqueueQueueWork(key)
             }
             } finally { mutable.value = state.value.copy(busy = false) }
@@ -168,9 +174,10 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
                 try { mutex.withLock {
                     try {
                         val local = store ?: throw DriveFailure(401)
-                        PrivateDriveSync(api, local).apply { sync { publish() }; retryCleanup() }
+                        activeSyncStore = local
+                        runDiagnosedSync(local, DriveSyncOrigin.AUTOMATIC)
                         mutable.value = state.value.copy(verified = true, syncError = null)
-                        publish()
+                        publish(local)
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -186,6 +193,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
                         }
                         mutable.value = state.value.copy(syncError = message)
                     } finally {
+                        activeSyncStore = null
                         mutable.value = state.value.copy(syncing = false)
                     }
                 } } finally { backgroundSyncGate.release() }
@@ -206,8 +214,8 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
         return token
     }
 
-    private fun publish() {
-        val local = store ?: return
+    private fun publish(explicit: PrivateDriveStore? = null) {
+        val local = authoritativePrivateStore(explicit ?: activeSyncStore, store) ?: return
         val pending = queuedPrivateSaves(local.directory)
         val deletePlan = privateQueueFiles(local.directory).asSequence().mapNotNull { file ->
             runCatching { JSONObject(file.readText()) }.getOrNull()
@@ -229,10 +237,12 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     private suspend fun <T> operation(syncing: Boolean = false, action: suspend (PrivateDriveStore) -> T): Result<T> = mutex.withLock {
         mutable.value = state.value.copy(busy = true, syncing = syncing, message = null, messageIsError = false,
             syncError = if (syncing) null else state.value.syncError)
+        var operationStore: PrivateDriveStore? = null
         try {
             val local = store ?: throw DriveFailure(401)
+            operationStore = local
             val value = withContext(Dispatchers.IO) { action(local) }
-            publish(); Result.success(value)
+            publish(local); Result.success(value)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             if (e is DriveFailure && (e.status == 401 || e.status == 403)) {
@@ -240,7 +250,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
                 accessToken = null
                 mutable.value = state.value.copy(verified = false)
             }
-            publish()
+            publish(operationStore)
             val message = if (e is DriveFailure) e.message else "인터넷 연결 또는 개인 자료 파일을 확인하고 재시도해 주세요. 저장은 완료되지 않았습니다."
             mutable.value = state.value.copy(message = message, messageIsError = true)
             Result.failure(IllegalStateException(message))
@@ -250,8 +260,25 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     suspend fun sync(): Result<Unit> {
         if (backgroundSyncJob?.isActive == true) return Result.success(Unit)
         return operation(syncing = true) { local ->
-            PrivateDriveSync(api, local).apply { sync { publish() }; retryCleanup() }
+            activeSyncStore = local
+            try { runDiagnosedSync(local, DriveSyncOrigin.MANUAL) }
+            finally { activeSyncStore = null }
             mutable.value = state.value.copy(verified = true)
+        }
+    }
+
+    /** Keeps automatic and user-requested scans comparable in Logcat without exposing private data. */
+    private suspend fun runDiagnosedSync(local: PrivateDriveStore, origin: DriveSyncOrigin) {
+        val diagnosedApi = DiagnosticPrivateDriveApi(api, origin)
+        val metrics = PrivateSyncMetrics()
+        var success = false
+        try {
+            PrivateDriveSync(diagnosedApi, local, metrics).apply { sync { publish(local) }; retryCleanup() }
+            success = true
+        } finally {
+            val heads = privateHeads(local.revisions.values)
+            val snapshot = metrics.snapshot()
+            diagnosedApi.finish(success, snapshot, local.revisions.size, heads.size, searchPrivateDocuments(heads, "").size)
         }
     }
 
@@ -343,7 +370,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
 
     private suspend fun uploadPending(local: PrivateDriveStore) {
         PrivateDriveUploads(api, local).uploadPending()
-        publish()
+        publish(local)
     }
     private fun enqueueQueueWork(accountKey: String) {
         val request = OneTimeWorkRequestBuilder<PrivateDriveUploadWorker>()
@@ -367,8 +394,21 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             WorkManager.getInstance(context).getWorkInfosForUniqueWorkLiveData("private-drive-upload-$accountKey")
                 .observeForever(Observer {
                     if (state.value.accountKey == accountKey) {
-                        store?.directory?.let { store = PrivateDriveStore(it) }
-                        publish()
+                        backgroundScope.launch {
+                            mutex.withLock {
+                                if (state.value.accountKey != accountKey) return@withLock
+                                val active = authoritativePrivateStore(activeSyncStore, null)
+                                if (active != null) {
+                                    // The sync owner remains authoritative while it is active.
+                                    publish(active)
+                                } else {
+                                    val current = store ?: return@withLock
+                                    val refreshed = PrivateDriveStore(current.directory)
+                                    store = refreshed
+                                    publish(refreshed)
+                                }
+                            }
+                        }
                     }
                 })
         }
@@ -420,7 +460,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
         if (file.exists()) {
             val plan = JSONObject(file.readText())
             // A lost response may have committed the metadata. Synchronize before deciding to cancel.
-            PrivateDriveSync(api, local).sync { publish() }
+            PrivateDriveSync(api, local).sync { publish(local) }
             val published = local.revisions[plan.getString("metadataId")]
             if (published == null || published.remoteState == PrivateRemoteState.MISSING || published.remoteState == PrivateRemoteState.TRASHED) {
                 val entries = plan.getJSONArray("attachments")
