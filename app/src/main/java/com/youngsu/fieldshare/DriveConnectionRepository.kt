@@ -25,6 +25,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -75,11 +77,13 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     private val identityFile = AtomicFile(File(root, "connection.json"))
     private val authorization = Identity.getAuthorizationClient(context)
     private val mutex = Mutex()
+    private val thumbnailReads = Semaphore(2)
     private val observedQueueKeys = mutableSetOf<String>()
     private var stableId: String? = null
     private var accessToken: String? = null
     private var tokenTime = 0L
-    private var store: PrivateDriveStore? = null
+    @Volatile private var store: PrivateDriveStore? = null
+    private val thumbnailStateLock = Any()
     /** Non-null while a foreground/background sync owns the in-memory snapshot. */
     @Volatile private var activeSyncStore: PrivateDriveStore? = null
     private val mutable = MutableStateFlow(DriveUiState())
@@ -89,6 +93,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     private val backgroundSyncGate = BackgroundSyncGate()
     @Volatile private var backgroundSyncJob: Job? = null
     @Volatile private var cleanupJob: Job? = null
+    @Volatile private var thumbnailMigrationJob: Job? = null
 
     init {
         runCatching {
@@ -136,19 +141,23 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             val email = info.getString("email")
             require(info.optBoolean("email_verified"))
             withContext(Dispatchers.IO) {
-                if (stableId != sdkId) {
-                    val previousStore = store
-                    check(previousStore == null || (privateQueueFiles(previousStore.directory).isEmpty() && !File(previousStore.directory, "pending.json").exists())) {
-                        "동기화되지 않은 내 자료가 있어 계정을 변경할 수 없습니다. 동기화를 완료하거나 취소해 주세요."
-                    }
-                    stableId?.let { PrivateRegistrationContext.clearInactiveAccount(context, accountCacheKey(it)) }
-                    store?.directory?.deleteRecursively()
-                    viewCache.deleteRecursively()
-                    mutable.value = DriveUiState(busy = true)
-                }
-                stableId = sdkId; accessToken = token; tokenTime = System.currentTimeMillis()
+                val previousId = stableId
+                accessToken = token; tokenTime = System.currentTimeMillis()
                 val key = accountCacheKey(sdkId)
-                store = PrivateDriveStore(File(root, key))
+                synchronized(thumbnailStateLock) {
+                    if (previousId != sdkId) {
+                        val previousStore = store
+                        check(previousStore == null || (privateQueueFiles(previousStore.directory).isEmpty() && !File(previousStore.directory, "pending.json").exists())) {
+                            "동기화되지 않은 내 자료가 있어 계정을 변경할 수 없습니다. 동기화를 완료하거나 취소해 주세요."
+                        }
+                        stableId?.let { PrivateRegistrationContext.clearInactiveAccount(context, accountCacheKey(it)) }
+                        store?.directory?.deleteRecursively()
+                        viewCache.deleteRecursively()
+                        mutable.value = DriveUiState(busy = true)
+                    }
+                    stableId = sdkId
+                    store = PrivateDriveStore(File(root, key))
+                }
                 val output = identityFile.startWrite()
                 try { output.write(JSONObject().put("id", sdkId).put("email", email).toString().toByteArray()); identityFile.finishWrite(output) }
                 catch (e: Exception) { identityFile.failWrite(output); throw e }
@@ -277,6 +286,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             PrivateDriveSync(diagnosedApi, local, metrics).apply { sync { publish(local) }; retryCleanup() }
             success = true
             scheduleObsoleteCleanup(local, diagnosedApi)
+            scheduleThumbnailMigration(local, diagnosedApi)
         } finally {
             val heads = privateHeads(local.revisions.values)
             val snapshot = metrics.snapshot()
@@ -299,12 +309,44 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
         }
     }
 
+    /** Legacy thumbnail repair starts only after the sync has durably completed. */
+    private fun scheduleThumbnailMigration(local: PrivateDriveStore, migrationApi: PrivateDriveApi) {
+        synchronized(this) {
+            if (thumbnailMigrationJob?.isActive == true) return
+            thumbnailMigrationJob = backgroundScope.launch {
+                try {
+                    PrivateDriveThumbnailMigration(
+                        api = migrationApi,
+                        directory = local.directory,
+                        ready = { mutex.withLock { store === local && local.initialListReady && local.initialSyncComplete } },
+                        targets = { mutex.withLock { legacyThumbnailMigrationTargets(local) } },
+                        commit = { target, thumbnailId ->
+                            mutex.withLock {
+                                if (store === local) {
+                                    val current = local.revisions[target.metadataId]
+                                    if (current != null && current.id == target.documentId &&
+                                        current.revision == target.revision && current.thumbnailId.isBlank()) {
+                                        local.revisions[target.metadataId] = current.copy(thumbnailId = thumbnailId)
+                                        local.save()
+                                        publish(local)
+                                    }
+                                }
+                            }
+                        }
+                    ).run()
+                } finally { thumbnailMigrationJob = null }
+            }
+        }
+    }
+
     suspend fun disconnect() {
         check(!state.value.pendingSave) { "미완료 저장을 재시도하거나 취소한 뒤 연결을 해제해 주세요." }
         backgroundSyncJob?.cancel()
         backgroundSyncJob = null
         cleanupJob?.cancel()
         cleanupJob = null
+        thumbnailMigrationJob?.cancel()
+        thumbnailMigrationJob = null
         mutex.withLock {
             check(!state.value.pendingSave) { "미완료 저장을 재시도하거나 취소한 뒤 연결을 해제해 주세요." }
             val previousKey = state.value.accountKey
@@ -312,10 +354,10 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             accessToken = null; stableId = null
             mutable.value = DriveUiState(message = "Drive 연결 해제됨 · 원본 자료는 Drive에 유지됩니다.")
             withContext(Dispatchers.IO) {
-                store?.directory?.deleteRecursively(); identityFile.delete(); viewCache.deleteRecursively()
+                synchronized(thumbnailStateLock) { store?.directory?.deleteRecursively(); store = null }
+                identityFile.delete(); viewCache.deleteRecursively()
                 previousKey?.let { PrivateRegistrationContext.clearInactiveAccount(context, it) }
             }
-            store = null
         }
     }
 
@@ -423,7 +465,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
                                 } else {
                                     val current = store ?: return@withLock
                                     val refreshed = PrivateDriveStore(current.directory)
-                                    store = refreshed
+                                    synchronized(thumbnailStateLock) { store = refreshed }
                                     publish(refreshed)
                                 }
                             }
@@ -559,20 +601,17 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     }
 
     /** Fetches only the app-owned small JPEG. It is authenticated through DriveApi's Bearer token. */
-    suspend fun thumbnail(document: PrivateDocument): Result<File> = mutex.withLock {
-        runCatching {
-            require(document.thumbnailId.isNotBlank())
-            val local = store ?: throw DriveFailure(401)
-            val file = File(local.directory, "thumbnails/${accountCacheKey(document.thumbnailId)}.jpg")
-            if (!file.exists()) {
-                val bytes = api.read(document.thumbnailId)
-                file.parentFile!!.mkdirs()
-                val atomic = AtomicFile(file); val output = atomic.startWrite()
-                try { output.write(bytes); atomic.finishWrite(output) } catch (e: Exception) { atomic.failWrite(output); throw e }
-            }
-            file.setLastModified(System.currentTimeMillis())
-            file
+    suspend fun thumbnail(document: PrivateDocument): Result<File> {
+        val (activeSnapshot, currentSnapshot, accountKey) = synchronized(thumbnailStateLock) {
+            Triple(activeSyncStore, store, state.value.accountKey)
         }
+        return readPrivateDocumentThumbnail(api, document, activeSnapshot, currentSnapshot, accountKey,
+            thumbnailReads, cacheLock = thumbnailStateLock) { selected ->
+                synchronized(thumbnailStateLock) {
+                    state.value.accountKey == accountKey &&
+                        (store === selected || activeSyncStore === selected)
+                }
+            }
     }
 
     suspend fun original(attachment: PrivateAttachment): Result<File> = operation { local ->

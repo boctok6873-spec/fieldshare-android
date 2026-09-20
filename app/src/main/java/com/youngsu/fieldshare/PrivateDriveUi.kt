@@ -28,6 +28,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
@@ -43,11 +44,15 @@ import com.youngsu.fieldshare.ui.theme.SamsungBlue
 import com.youngsu.fieldshare.ui.theme.SamsungBlueDark
 import com.youngsu.fieldshare.ui.theme.SamsungBlueLight
 import com.youngsu.fieldshare.ui.theme.SoftGray
+
 import coil.compose.SubcomposeAsyncImage
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import java.text.DateFormat
 import java.util.Date
+
+internal const val PRIVATE_PIN_ROTATION_DEGREES = 35f
+internal const val PRIVATE_PIN_COLOR_ARGB = 0xFFC62828
 
 @Composable
 internal fun DriveSettings(repository: DriveConnectionRepository) {
@@ -339,7 +344,8 @@ internal fun PrivateDocumentDetailScreen(
                                 enabled = !state.busy && !state.pendingSave && document.remoteState == PrivateRemoteState.AVAILABLE) {
                                 Icon(Icons.Default.PushPin,
                                     contentDescription = if (document.pinned) "자료 상단 고정 해제" else "자료 상단 고정",
-                                    tint = if (document.pinned) SamsungBlue else Color(0xFF7E8795))
+                                    tint = if (document.pinned) Color(PRIVATE_PIN_COLOR_ARGB) else Color(0xFF7E8795),
+                                    modifier = Modifier.rotate(PRIVATE_PIN_ROTATION_DEGREES))
                             }
                         }
                         imageAttachments.forEachIndexed { index, attachment ->
@@ -366,7 +372,8 @@ internal fun PrivateDocumentDetailScreen(
                             enabled = !state.busy && !state.pendingSave && document.remoteState == PrivateRemoteState.AVAILABLE) {
                             Icon(Icons.Default.PushPin,
                                 contentDescription = if (document.pinned) "자료 상단 고정 해제" else "자료 상단 고정",
-                                tint = if (document.pinned) SamsungBlue else Color(0xFF7E8795))
+                                tint = if (document.pinned) Color(PRIVATE_PIN_COLOR_ARGB) else Color(0xFF7E8795),
+                                modifier = Modifier.rotate(PRIVATE_PIN_ROTATION_DEGREES))
                         }
                     }
                     TextDocumentContentBody(document.content)
@@ -475,8 +482,9 @@ private fun PrivateDocumentCard(repository: DriveConnectionRepository, document:
                 Icon(
                     Icons.Default.PushPin,
                     contentDescription = "상단 고정된 자료",
-                    tint = SamsungBlue.copy(alpha = 0.72f),
+                    tint = Color(PRIVATE_PIN_COLOR_ARGB).copy(alpha = 0.86f),
                     modifier = Modifier.align(androidx.compose.ui.Alignment.BottomEnd).padding(8.dp).size(18.dp)
+                        .rotate(PRIVATE_PIN_ROTATION_DEGREES)
                 )
             }
         }

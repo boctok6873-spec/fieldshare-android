@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.DocumentListMappingTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-20T10:16:45.611Z" hostname="BOCTOK-PC" time="0.071">
-  <properties/>
-  <testcase name="listMapping_keepsStoragePathsWithoutResolvingDownloadUrls" classname="com.youngsu.fieldshare.DocumentListMappingTest" time="0.071"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

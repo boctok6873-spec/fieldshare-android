@@ -51,6 +51,8 @@ internal class DiagnosticPrivateDriveApi(
     override suspend fun trash(id: String) = request("files.trash") { delegate.trash(id) }
     override suspend fun copy(sourceId: String, id: String, metadata: org.json.JSONObject) =
         request("files.copy") { delegate.copy(sourceId, id, metadata) }
+    override suspend fun patchAppProperties(id: String, properties: org.json.JSONObject) =
+        request("files.update.appProperties") { delegate.patchAppProperties(id, properties) }
 
     fun finish(success: Boolean, metrics: PrivateSyncMetricsSnapshot, revisions: Int, heads: Int, visibleDocuments: Int) {
         Log.i(TAG, "origin=$origin syncResult=${if (success) "success" else "failure"} " +

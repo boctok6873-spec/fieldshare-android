@@ -8,7 +8,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
-internal const val PRIVATE_TOMBSTONE_RETENTION_MS = 30L * 24L * 60L * 60L * 1000L
+internal const val PRIVATE_TOMBSTONE_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L
 private const val CLEANUP_JOURNAL = "obsolete-cleanup.json"
 private const val CLEANUP_LAST = "obsolete-cleanup.last"
 private const val CLEANUP_INTERVAL_MS = 24L * 60L * 60L * 1000L
@@ -34,7 +34,7 @@ private data class CleanupJournal(val remaining: LinkedHashSet<String>, val crea
 private fun cleanupJournalFile(directory: File) = File(directory, CLEANUP_JOURNAL)
 private fun cleanupLastFile(directory: File) = File(directory, CLEANUP_LAST)
 
-private fun pendingDriveIds(directory: File): Set<String> {
+internal fun pendingPrivateDriveIds(directory: File): Set<String> {
     val ids = linkedSetOf<String>()
     fun collect(plan: JSONObject) {
         listOf("metadataId", "thumbnailId", "baseFileId", "sourceId").forEach { plan.optString(it).takeIf(String::isNotBlank)?.let(ids::add) }
@@ -68,7 +68,7 @@ internal fun planPrivateDriveCleanup(
     val activeHeads = privateHeads(documents).filter { !it.deleted }
     val retainedTombstones = privateHeads(documents).filter { it.deleted && now - it.modified < tombstoneRetentionMs }
     val retained = activeHeads + retainedTombstones
-    val pending = pendingDriveIds(store.directory) + store.cleanup
+    val pending = pendingPrivateDriveIds(store.directory) + store.cleanup
     val preserved = linkedSetOf<String>().apply {
         addAll(pending)
         retained.forEach { document ->
@@ -156,7 +156,7 @@ internal suspend fun cleanupObsoletePrivateDrive(
     if (journal == null && now - last < CLEANUP_INTERVAL_MS) {
         return PrivateCleanupResult(0, 0, 0, plan.preservedTombstones, 0)
     }
-    val currentPending = pendingDriveIds(store.directory)
+    val currentPending = pendingPrivateDriveIds(store.directory)
     val currentPreserved = plan.preservedIds + currentPending + store.cleanup
     val inventoryCandidates = orphanInventory(api, currentPreserved)
     val currentCandidates = plan.candidates + inventoryCandidates

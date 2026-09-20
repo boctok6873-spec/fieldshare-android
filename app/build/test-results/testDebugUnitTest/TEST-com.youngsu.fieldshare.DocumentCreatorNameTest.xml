@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.DocumentCreatorNameTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-20T10:16:45.591Z" hostname="BOCTOK-PC" time="0.017">
-  <properties/>
-  <testcase name="displayCreatorName_usesAnonymousFallbackForLegacyDocuments" classname="com.youngsu.fieldshare.DocumentCreatorNameTest" time="0.017"/>
-  <testcase name="displayCreatorName_trimsStoredName" classname="com.youngsu.fieldshare.DocumentCreatorNameTest" time="0.0"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

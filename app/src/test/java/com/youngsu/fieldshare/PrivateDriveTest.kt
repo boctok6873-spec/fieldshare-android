@@ -1,6 +1,9 @@
 package com.youngsu.fieldshare
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import org.json.JSONObject
 import org.json.JSONArray
 import java.io.File
@@ -174,6 +177,121 @@ class PrivateDriveTest {
         cleanupObsoletePrivateDrive(api, cache)
         assertTrue(api.trashed.containsAll(listOf("orphan-att", "orphan-thumb")))
         assertTrue(api.listQueries.single().contains("trashed=false"))
+    }
+
+    @Test fun legacyImageThumbnailMigrationStartsAfterListReadyAndUpdatesOnlySummaryProperty() = runBlocking {
+        val cache = MemoryCache().apply { initialListReady = true; initialSyncComplete = true }
+        val legacy = doc().copy(fileId = "meta-legacy", revision = "rev-legacy",
+            attachments = listOf(PrivateAttachment("image-legacy", "image/jpeg")))
+        cache.revisions[legacy.fileId] = legacy
+        val api = FakeApi().apply { bodies["image-legacy"] = byteArrayOf(1, 2, 3) }
+        val events = mutableListOf<String>(); var firstReadyCheck = true
+        val migration = PrivateDriveThumbnailMigration(api, cache.directory,
+            ready = { if (firstReadyCheck) { events += "migration"; firstReadyCheck = false }; cache.initialListReady && cache.initialSyncComplete },
+            targets = { legacyThumbnailMigrationTargets(cache) },
+            commit = { target, thumbnailId ->
+                events += "commit"
+                cache.revisions[target.metadataId] = cache.revisions.getValue(target.metadataId).copy(thumbnailId = thumbnailId)
+            },
+            encode = { it })
+        events += "summary"
+        migration.run()
+        assertEquals(listOf("summary", "migration", "commit"), events)
+        assertEquals("generated", cache.revisions.getValue("meta-legacy").thumbnailId)
+        assertEquals("generated", api.patchedProperties["meta-legacy"]?.optString("listThumbnailId"))
+        assertEquals("thumbnail", api.createdMetadata["generated"]?.optJSONObject("appProperties")?.optString("kind"))
+        assertEquals("rev-legacy", cache.revisions.getValue("meta-legacy").revision)
+    }
+
+    @Test fun thumbnailMigrationResumesSameGeneratedIdAfterCreateFailure() = runBlocking {
+        val cache = MemoryCache().apply { initialListReady = true; initialSyncComplete = true }
+        val legacy = doc().copy(fileId = "meta-retry", revision = "rev-retry",
+            attachments = listOf(PrivateAttachment("image-retry", "image/jpeg")))
+        cache.revisions[legacy.fileId] = legacy
+        val api = FakeApi().apply { bodies["image-retry"] = byteArrayOf(7); failCreate = "generated" }
+        fun migration() = PrivateDriveThumbnailMigration(api, cache.directory,
+            targets = { legacyThumbnailMigrationTargets(cache) },
+            commit = { target, thumbnailId -> cache.revisions[target.metadataId] = cache.revisions.getValue(target.metadataId).copy(thumbnailId = thumbnailId) },
+            encode = { it })
+        migration().run()
+        assertTrue(File(cache.directory, "thumbnail-migration.json").exists())
+        api.failCreate = null
+        migration().run()
+        assertFalse(File(cache.directory, "thumbnail-migration.json").exists())
+        assertEquals(listOf("generated"), api.generatedIds)
+        assertEquals("generated", cache.revisions.getValue("meta-retry").thumbnailId)
+    }
+
+    @Test fun thumbnailMigrationPatchesAfterRetryAndCommitsLocalIdOnlyAfterPatch() = runBlocking {
+        val cache = MemoryCache().apply { initialListReady = true; initialSyncComplete = true }
+        val legacy = doc().copy(fileId = "meta-patch", revision = "rev-patch",
+            attachments = listOf(PrivateAttachment("image-patch", "image/jpeg")))
+        cache.revisions[legacy.fileId] = legacy
+        val api = FakeApi().apply {
+            bodies["image-patch"] = byteArrayOf(9)
+            failPatch = "meta-patch"
+        }
+        fun migration() = PrivateDriveThumbnailMigration(api, cache.directory,
+            targets = { legacyThumbnailMigrationTargets(cache) },
+            commit = { target, thumbnailId -> cache.revisions[target.metadataId] = cache.revisions.getValue(target.metadataId).copy(thumbnailId = thumbnailId) },
+            encode = { it })
+        migration().run()
+        assertTrue(cache.revisions.getValue("meta-patch").thumbnailId.isBlank())
+        api.failPatch = null
+        migration().run()
+        assertEquals("generated", cache.revisions.getValue("meta-patch").thumbnailId)
+        assertEquals(listOf("generated"), api.generatedIds)
+        assertFalse(File(cache.directory, "thumbnail-migration.json").exists())
+    }
+
+    @Test fun repositoryThumbnailSnapshotUsesActiveStoreDuringLongFullSync() = runBlocking {
+        val accountKey = "account-key"
+        val api = FakeApi().apply {
+            bodies["full-sync-read"] = byteArrayOf()
+            readDelayById["full-sync-read"] = 500
+        }
+        val root = Files.createTempDirectory("thumbnail-read").toFile()
+        val active = PrivateDriveStore(File(root, accountKey))
+        val refreshed = PrivateDriveStore(File(root, "other-account"))
+        val cached = File(active.directory, "thumbnails/${accountCacheKey("thumb-fast")}.jpg").apply {
+            parentFile!!.mkdirs(); writeText("cached")
+        }
+        val fullSync = launch { api.read("full-sync-read") }
+        assertSame(active, selectPrivateThumbnailStore(active, refreshed, accountKey))
+        assertEquals(cached, withTimeout(1_000) {
+            readPrivateDocumentThumbnail(api, doc().copy(thumbnailId = "thumb-fast"), active, refreshed,
+                accountKey, Semaphore(2)).getOrThrow()
+        })
+        fullSync.join()
+    }
+
+    @Test fun legacyThumbnailMigrationSkipsNonImageDeletedThumbnailedAndPendingDocuments() {
+        val cache = MemoryCache().apply { initialListReady = true; initialSyncComplete = true }
+        cache.revisions["text"] = doc(id = "text").copy(fileId = "meta-text")
+        cache.revisions["deleted"] = doc(id = "deleted").copy(fileId = "meta-deleted", deleted = true,
+            attachments = listOf(PrivateAttachment("image-deleted", "image/jpeg")))
+        cache.revisions["thumb"] = doc(id = "thumb").copy(fileId = "meta-thumb", thumbnailId = "thumb-id",
+            attachments = listOf(PrivateAttachment("image-thumb", "image/jpeg")))
+        cache.revisions["pending"] = doc(id = "pending").copy(fileId = "meta-pending",
+            attachments = listOf(PrivateAttachment("image-pending", "image/jpeg")))
+        File(cache.directory, "pending.json").writeText(JSONObject().put("metadataId", "meta-pending").toString())
+        assertTrue(legacyThumbnailMigrationTargets(cache).isEmpty())
+    }
+
+    @Test fun thumbnailSnapshotRejectsAccountDirectoryMismatchWithoutReadingDrive() = runBlocking {
+        val api = FakeApi()
+        val root = Files.createTempDirectory("thumbnail-account").toFile()
+        val store = PrivateDriveStore(File(root, "account-a"))
+        val result = readPrivateDocumentThumbnail(api, doc().copy(thumbnailId = "thumb"), store, null,
+            "account-b", Semaphore(2))
+        assertTrue(result.isFailure)
+        assertTrue(api.reads.isEmpty())
+    }
+
+    @Test fun pinnedIconPresentationKeepsPinnedLogicWithRotatedRedStyle() {
+        assertTrue(showsPinnedPrivateDocument(doc().copy(pinned = true)))
+        assertEquals(-35f, PRIVATE_PIN_ROTATION_DEGREES)
+        assertEquals(0xFFC62828, PRIVATE_PIN_COLOR_ARGB)
     }
 
     @Test fun fullSyncPublishesFirstSummaryBeforeLaterDrivePages() = runBlocking {
@@ -763,7 +881,11 @@ class PrivateDriveTest {
         var failTrash: String? = null
         var creates = 0
         val created = mutableListOf<String>()
+        val generatedIds = mutableListOf<String>()
+        val createdMetadata = mutableMapOf<String, JSONObject>()
+        val patchedProperties = mutableMapOf<String, JSONObject>()
         var failCreate: String? = null
+        var failPatch: String? = null
         var failRead: String? = null
         var readFailureStatus = 503
         var readDelayMs = 0L
@@ -795,9 +917,13 @@ class PrivateDriveTest {
                 return bodies.getValue(id)
             } finally { synchronized(this) { activeReads--; readFinished += id; readEvents += "finish:$id" } }
         }
-        override suspend fun generateId() = "generated"
+        override suspend fun generateId() = "generated".also { generatedIds += it }
         override suspend fun create(id: String, metadata: JSONObject, bytes: ByteArray?, mime: String) {
-            creates++; created += id; onCreate?.invoke(id); if (id == failCreate) throw DriveFailure(503)
+            creates++; created += id; createdMetadata[id] = JSONObject(metadata.toString()); onCreate?.invoke(id); if (id == failCreate) throw DriveFailure(503)
+        }
+        override suspend fun patchAppProperties(id: String, properties: JSONObject) {
+            patchedProperties[id] = JSONObject(properties.toString())
+            if (id == failPatch) throw DriveFailure(503)
         }
         override suspend fun trash(id: String) { trashed += id; if (id == failTrash) throw DriveFailure(503) }
         override suspend fun copy(sourceId: String, id: String, metadata: JSONObject) { creates++; created += id }

@@ -23,6 +23,8 @@ internal interface PrivateDriveApi {
     suspend fun create(id: String, metadata: JSONObject, bytes: ByteArray? = null, mime: String = "application/json")
     suspend fun trash(id: String)
     suspend fun copy(sourceId: String, id: String, metadata: JSONObject)
+    /** Updates only the supplied appProperties keys while preserving the remote map. */
+    suspend fun patchAppProperties(id: String, properties: JSONObject) {}
 }
 
 internal class DriveApi(private val token: suspend () -> String) : PrivateDriveApi {
@@ -92,6 +94,14 @@ internal class DriveApi(private val token: suspend () -> String) : PrivateDriveA
         try { request("drive/v3/files/$sourceId/copy", method = "POST",
             body = metadata.toString().toRequestBody("application/json".toMediaType())) }
         catch (failure: DriveFailure) { if (failure.status != 409) throw failure; ensureRetryTargetExists(id) }
+    }
+    override suspend fun patchAppProperties(id: String, properties: JSONObject) {
+        val current = JSONObject(String(request("drive/v3/files/$id", mapOf("fields" to "appProperties"))))
+        val merged = current.optJSONObject("appProperties") ?: JSONObject()
+        properties.keys().forEach { key -> merged.put(key, properties.get(key)) }
+        request("drive/v3/files/$id", method = "PATCH",
+            body = JSONObject().put("appProperties", merged)
+                .toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
     }
     private suspend fun ensureRetryTargetExists(id: String) {
         val file = JSONObject(String(request("drive/v3/files/$id", mapOf("fields" to "id,trashed"))))

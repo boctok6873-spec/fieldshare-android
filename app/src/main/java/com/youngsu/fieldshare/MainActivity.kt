@@ -164,11 +164,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.time.LocalDate
+import androidx.activity.SystemBarStyle
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         setContent {
             FieldShareTheme { FieldShareApp() }
         }
@@ -998,14 +1001,14 @@ private fun SoftwareInfoScreen(onBack: () -> Unit) {
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Version : FieldShare_v2.1", color = Color(0xFF5E6878))
+            Text("Version : FieldShare_v2.5", color = Color(0xFF5E6878))
             Text("Developer : Kim Young-su", color = Color(0xFF5E6878))
             Text("Development Tool : Android Studio", color = Color(0xFF5E6878))
             Text("Programming Language : Kotlin", color = Color(0xFF5E6878))
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("UI Framework : Jetpack Compose", color = Color(0xFF5E6878))
                 Text(
-                    text = "(2026. 9. 8)",
+                    text = "(2026. 9. 20)",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF8A94A6)
                 )
