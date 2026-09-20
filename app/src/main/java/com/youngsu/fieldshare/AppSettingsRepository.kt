@@ -8,14 +8,31 @@ enum class HomeDocumentDisplayMode {
     HIDDEN
 }
 
+/** The commit callback must persist ALL and its one-time marker in one transaction. */
+internal fun migrateHomeDisplayOnce(completed: Boolean, commitAllAndMarker: () -> Unit) {
+    if (!completed) commitAllAndMarker()
+}
+
 /** Persists local presentation preferences independently from Firebase document data. */
 class AppSettingsRepository(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
+    init {
+        synchronized(AppSettingsRepository::class.java) {
+            migrateHomeDisplayOnce(preferences.getBoolean("drive_home_all_migration_v1", false)) {
+                check(preferences.edit().putString(KEY_HOME_DISPLAY_MODE, VALUE_ALL)
+                    .putBoolean("drive_home_all_migration_v1", true).commit()) {
+                    "홈 표시 설정을 저장하지 못했습니다."
+                }
+            }
+        }
+    }
+
     fun getHomeDisplayMode(): HomeDocumentDisplayMode = when (preferences.getString(KEY_HOME_DISPLAY_MODE, null)) {
         VALUE_ALL -> HomeDocumentDisplayMode.ALL
         VALUE_HIDDEN -> HomeDocumentDisplayMode.HIDDEN
-        else -> HomeDocumentDisplayMode.RECENT_ONLY
+        VALUE_RECENT_ONLY -> HomeDocumentDisplayMode.RECENT_ONLY
+        else -> HomeDocumentDisplayMode.ALL
     }
 
     fun setHomeDisplayMode(mode: HomeDocumentDisplayMode) {

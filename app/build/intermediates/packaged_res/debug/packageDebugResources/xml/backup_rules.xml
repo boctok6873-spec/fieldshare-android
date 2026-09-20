@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
+    <!-- Drive identity/metadata live in noBackupFilesDir; originals/drafts in no-backup or cache.
+         These directories are excluded by Android independently of this preference rule. -->
     <!-- API 30 and lower: keep notification consent and installation ID local. -->
     <exclude domain="sharedpref" path="fieldshare_notifications.xml" />
 </full-backup-content>

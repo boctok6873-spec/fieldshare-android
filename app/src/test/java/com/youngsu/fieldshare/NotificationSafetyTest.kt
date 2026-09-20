@@ -2,6 +2,7 @@ package com.youngsu.fieldshare
 
 import java.io.File
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -13,6 +14,18 @@ class NotificationSafetyTest {
         assertFalse(shouldStoreFcmToken(true, false, true, "token"))
         assertFalse(shouldStoreFcmToken(true, true, false, "token"))
         assertFalse(shouldStoreFcmToken(true, true, true, ""))
+    }
+
+    @Test
+    fun freshInstallDefaultsOnWhileExistingExplicitChoiceAndPermissionStateRemainSeparate() {
+        assertTrue(initialNotificationIntent(null))
+        assertTrue(initialNotificationIntent(true))
+        assertFalse(initialNotificationIntent(false))
+        assertEquals(NotificationDeliveryState.PERMISSION_REQUIRED, notificationDeliveryState(true, false))
+        assertEquals(NotificationDeliveryState.ON, notificationDeliveryState(true, true))
+        assertEquals(NotificationDeliveryState.OFF, notificationDeliveryState(false, true))
+        // Permission denial must not mutate the saved user intent.
+        assertTrue(initialNotificationIntent(true))
     }
 
     @Test

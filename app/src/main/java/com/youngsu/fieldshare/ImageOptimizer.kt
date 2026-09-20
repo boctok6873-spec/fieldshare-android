@@ -119,7 +119,7 @@ object ImageOptimizer {
                         quality = 92
                     )
                 } catch (webpError: Throwable) {
-                    Log.w(LogTag, "WebP 압축에 실패해 JPEG로 한 번 대체 저장합니다: ${webpError.javaClass.simpleName}: ${webpError.message}", webpError)
+                    Log.w(LogTag, "WebP 압축에 실패해 JPEG로 한 번 대체 저장합니다.")
                     try {
                         writeBitmap(
                             bitmap = resized,
@@ -148,7 +148,7 @@ object ImageOptimizer {
                 }
             }
             try {
-                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outputFile)
+                FileProvider.getUriForFile(context.applicationContext, "${context.packageName}.fileprovider", outputFile)
             } catch (error: Throwable) {
                 logError("출력 URI 생성", error)
                 throw error
@@ -226,7 +226,7 @@ object ImageOptimizer {
 }
 
 private fun logError(stage: String, error: Throwable) {
-    Log.e("FieldShareImage", "$stage 실패: ${error.javaClass.simpleName}: ${error.message}", error)
+    Log.e("FieldShareImage", "$stage 실패: ${error.javaClass.simpleName}")
 }
 
 internal fun validateImageSourceFile(sourceFile: File) {
@@ -241,7 +241,7 @@ internal fun validateImageSourceFile(sourceFile: File) {
 internal fun readExifOrientationOrNormal(
     readOrientation: () -> Int,
     logFailure: (Throwable) -> Unit = { error ->
-        Log.w("FieldShareImage", "EXIF 방향 정보를 읽지 못해 기본 방향으로 처리합니다.", error)
+        Log.w("FieldShareImage", "EXIF 방향 정보를 읽지 못해 기본 방향으로 처리합니다.")
     }
 ): Int = try {
     readOrientation()

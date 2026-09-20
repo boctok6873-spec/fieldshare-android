@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.DocumentRegistrationDateTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-02T13:06:56.959Z" hostname="BOCTOK-PC" time="0.068">
+<testsuite name="com.youngsu.fieldshare.DocumentRegistrationDateTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-20T01:38:35.054Z" hostname="BOCTOK-PC" time="0.071">
   <properties/>
-  <testcase name="allMode_includesOldAndLegacyDocumentsWithoutCreatedAt" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.04"/>
-  <testcase name="registrationDate_usesKoreanReadableFormatAndHandlesMissingTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.011"/>
-  <testcase name="recentActivityWindow_includesExactThirtyDayBoundaryOnly" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.005"/>
+  <testcase name="allMode_includesOldAndLegacyDocumentsWithoutCreatedAt" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.042"/>
+  <testcase name="registrationDate_usesKoreanReadableFormatAndHandlesMissingTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.013"/>
+  <testcase name="recentActivityWindow_includesExactThirtyDayBoundaryOnly" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.003"/>
   <testcase name="allMode_sortsDocumentWithTimestampBeforeLegacyDocumentWithoutTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.001"/>
-  <testcase name="activityDate_formatsTheCreatedTimeInKoreaAsMonthAndDay" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.01"/>
+  <testcase name="activityDate_formatsTheCreatedTimeInKoreaAsMonthAndDay" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.009"/>
   <testcase name="recentActivitiesForDisplay_includesActivityCreatedAfterListenerStarted" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.0"/>
-  <testcase name="activityDate_keepsTheSafeFallbackWhenServerTimeIsUnavailable" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.001"/>
+  <testcase name="activityDate_keepsTheSafeFallbackWhenServerTimeIsUnavailable" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

@@ -25,7 +25,14 @@ class PushNotificationManager(
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    fun areNotificationsEnabled(): Boolean = preferences.getBoolean(KEY_ENABLED, false) && systemNotificationsAllowed()
+    init { initializeNotificationIntent() }
+
+    /** Actual delivery capability; separate from the user's persisted intent. */
+    fun areNotificationsEnabled(): Boolean = notificationIntentEnabled() && systemNotificationsAllowed()
+    fun notificationIntentEnabled(): Boolean = preferences.getBoolean(KEY_ENABLED, true)
+    fun needsNotificationPermission(): Boolean = notificationIntentEnabled() && !systemNotificationsAllowed()
+    fun needsRuntimeNotificationPermission(): Boolean = notificationIntentEnabled() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        ContextCompat.checkSelfPermission(appContext, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
 
     suspend fun enable(): Result<Unit> = withStateTransitionLock { enableLocked() }
 
@@ -39,10 +46,11 @@ class PushNotificationManager(
     }
 
     private suspend fun enableLocked(): Result<Unit> = runCatching {
-        check(systemNotificationsAllowed()) { "기기 알림 권한을 허용해 주세요." }
+        // A user selecting ON is durable even if Android permission must be granted later.
+        preferences.edit(commit = true) { putBoolean(KEY_ENABLED, true) }
+        if (!systemNotificationsAllowed()) return@runCatching
         saveRegistration(FirebaseMessaging.getInstance().token.await())
         preferences.edit(commit = true) {
-            putBoolean(KEY_ENABLED, true)
             clearPendingCleanup()
         }
     }.mapErrorToUserMessage()
@@ -63,9 +71,10 @@ class PushNotificationManager(
 
     private suspend fun refreshRegistrationLocked(): Result<Unit> {
         val cleanupResult = retryPendingCleanupLocked()
-        if (!preferences.getBoolean(KEY_ENABLED, false)) return cleanupResult.mapErrorToUserMessage()
+        if (!notificationIntentEnabled()) return cleanupResult.mapErrorToUserMessage()
         cleanupResult.exceptionOrNull()?.let { return Result.failure<Unit>(it).mapErrorToUserMessage() }
-        if (!systemNotificationsAllowed()) return disableLocked()
+        // Permission denial is not an opt-out. Keep intent and wait for a later grant.
+        if (!systemNotificationsAllowed()) return Result.success(Unit)
         return runCatching {
             saveRegistration(FirebaseMessaging.getInstance().token.await())
         }.mapErrorToUserMessage()
@@ -73,7 +82,7 @@ class PushNotificationManager(
 
     private suspend fun updateTokenIfEligibleLocked(token: String): Result<Unit> {
         if (!shouldStoreFcmToken(
-                notificationsOptedIn = preferences.getBoolean(KEY_ENABLED, false),
+                notificationsOptedIn = notificationIntentEnabled(),
                 systemNotificationsAllowed = systemNotificationsAllowed(),
                 hasAuthenticatedUser = !userId.isNullOrBlank(),
                 token = token
@@ -103,6 +112,15 @@ class PushNotificationManager(
         ?: UUID.randomUUID().toString().also { id ->
             preferences.edit { putString(KEY_INSTALLATION_ID, id) }
         }
+
+    /** Only a truly fresh preferences file gets the ON default; legacy explicit choices survive. */
+    private fun initializeNotificationIntent() {
+        if (preferences.getInt(KEY_DEFAULT_INTENT_VERSION, 0) >= NOTIFICATION_DEFAULT_INTENT_VERSION) return
+        preferences.edit(commit = true) {
+            if (!preferences.contains(KEY_ENABLED)) putBoolean(KEY_ENABLED, true)
+            putInt(KEY_DEFAULT_INTENT_VERSION, NOTIFICATION_DEFAULT_INTENT_VERSION)
+        }
+    }
 
     /** Must be called while [stateTransitionMutex] is held. */
     private suspend fun retryPendingCleanupLocked(): Result<Unit> {
@@ -208,6 +226,8 @@ class PushNotificationManager(
 
         const val PREFERENCES_NAME = "fieldshare_notifications"
         const val KEY_ENABLED = "enabled"
+        const val KEY_DEFAULT_INTENT_VERSION = "notification_default_intent_version"
+        const val NOTIFICATION_DEFAULT_INTENT_VERSION = 1
         const val KEY_INSTALLATION_ID = "installation_id"
         const val KEY_PENDING_CLEANUP_UID = "pending_cleanup_uid"
         const val KEY_PENDING_CLEANUP_INSTALLATION_ID = "pending_cleanup_installation_id"

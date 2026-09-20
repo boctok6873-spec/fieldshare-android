@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.youngsu.fieldshare.app-mergeDebugResources-69:/values-or/values-or.xml",
+            "outputFile": "com.youngsu.fieldshare.app-mergeDebugResources-76:/values-or/values-or.xml",
             "map": [
                 {
                     "source": "C:\\Users\\bocto\\.gradle\\caches\\8.13\\transforms\\ba7a27294eff6ec046a06bfaf2c01e39\\transformed\\play-services-basement-18.9.0\\res\\values-or\\values.xml",

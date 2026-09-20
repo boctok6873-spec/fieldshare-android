@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.youngsu.fieldshare.app-mergeDebugResources-69:/values-v21/values-v21.xml",
+            "outputFile": "com.youngsu.fieldshare.app-mergeDebugResources-76:/values-v21/values-v21.xml",
             "map": [
                 {
                     "source": "C:\\Users\\bocto\\.gradle\\caches\\8.13\\transforms\\7194649eaefc131612f1e80c40676da4\\transformed\\credentials-play-services-auth-1.2.0-rc01\\res\\values-v21\\values-v21.xml",

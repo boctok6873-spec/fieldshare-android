@@ -4,16 +4,19 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
+import androidx.compose.material3.FilterChip
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
@@ -184,7 +187,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun FieldShareApp() {
-    var screen by remember { mutableStateOf<AppScreen>(AppScreen.Home) }
+    var screen by rememberSaveable(stateSaver = androidx.compose.runtime.saveable.Saver<AppScreen, String>(
+        save = { if (it == AppScreen.Registration) "registration" else "home" },
+        restore = { if (it == "registration") AppScreen.Registration else AppScreen.Home }
+    )) { mutableStateOf<AppScreen>(AppScreen.Home) }
     var selectedCategory by rememberSaveable { mutableStateOf(AllCategory) }
     val context = LocalContext.current
     val settingsRepository = remember { AppSettingsRepository(context) }
@@ -303,6 +309,11 @@ private fun FirebaseDocumentApp(
         FirebaseDocumentRepository(context.applicationContext, currentUserId, currentProfile.displayName)
     }
     val thumbnailUrlResolver = remember(repository) { repository::resolveThumbnailUrl }
+    val driveRepository = remember { DriveConnectionRepository(context.applicationContext) }
+    val driveState by driveRepository.state.collectAsState()
+    var savePrivate by rememberSaveable { mutableStateOf(false) }
+    var registrationCategory by rememberSaveable { mutableStateOf("기타") }
+    LaunchedEffect(driveRepository, driveState.email) { if (driveState.email != null) driveRepository.startBackgroundSync() }
     val profileRepository = remember(currentUserId) { UserProfileRepository(currentUserId) }
     val notificationManager = remember(currentUserId) {
         PushNotificationManager(context.applicationContext, currentUserId)
@@ -311,7 +322,7 @@ private fun FirebaseDocumentApp(
     // restart cache/server events whenever this composable recomposes.
     // Keep the document stream available for keyword searches even when the
     // default home thumbnail list is hidden. Visibility is decided below.
-    val queryCategory = if (homeDisplayMode == HomeDocumentDisplayMode.ALL) AllCategory else selectedCategory
+    val queryCategory = if (homeDisplayMode == HomeDocumentDisplayMode.ALL || selectedCategory == PrivateCategory) AllCategory else selectedCategory
     val documentStream = remember(repository, homeDisplayMode, queryCategory) {
         repository.observeDocuments(
             category = queryCategory,
@@ -341,6 +352,9 @@ private fun FirebaseDocumentApp(
     var notificationsEnabled by remember(notificationManager) {
         mutableStateOf(notificationManager.areNotificationsEnabled())
     }
+    var notificationPermissionNeeded by remember(notificationManager) {
+        mutableStateOf(notificationManager.needsNotificationPermission())
+    }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchState by remember { mutableStateOf<DocumentSearchUiState>(DocumentSearchUiState.Idle) }
     var algoliaFailedQuery by remember { mutableStateOf<String?>(null) }
@@ -366,6 +380,7 @@ private fun FirebaseDocumentApp(
             notificationManager.enable()
                 .onSuccess {
                     notificationsEnabled = true
+                    notificationPermissionNeeded = false
                     operationError = null
                 }
                 .onFailure { error ->
@@ -379,6 +394,7 @@ private fun FirebaseDocumentApp(
         if (granted) {
             enableNotifications()
         } else {
+            notificationPermissionNeeded = notificationManager.needsNotificationPermission()
             operationError = "알림 권한을 허용하면 신규 자료 알림을 받을 수 있습니다."
         }
     }
@@ -386,6 +402,11 @@ private fun FirebaseDocumentApp(
     LaunchedEffect(notificationManager) {
         notificationManager.refreshRegistration().onFailure { error ->
             operationError = error.message ?: "알림 해제 정리를 다시 시도하지 못했습니다."
+        }
+        notificationsEnabled = notificationManager.areNotificationsEnabled()
+        notificationPermissionNeeded = notificationManager.needsNotificationPermission()
+        if (notificationManager.needsRuntimeNotificationPermission()) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -402,12 +423,17 @@ private fun FirebaseDocumentApp(
 
     LaunchedEffect(
         repository,
+        selectedCategory,
         searchQuery,
         homeDisplayMode,
         allDocumentsLoadedFromServer,
         searchRoute,
         if (usesLocalHomeSearch(searchRoute, searchQuery)) documents else null
     ) {
+        if (selectedCategory == PrivateCategory) {
+            searchState = DocumentSearchUiState.Idle
+            return@LaunchedEffect
+        }
         val normalizedQuery = searchQuery.trim()
         if (normalizedQuery.length < minimumHomeSearchQueryLength(searchRoute)) {
             searchState = DocumentSearchUiState.Idle
@@ -455,8 +481,20 @@ private fun FirebaseDocumentApp(
             searchState = searchState,
             homeDisplayMode = homeDisplayMode,
             selectedCategory = selectedCategory,
-            onCategorySelected = onCategoryChange,
+            onCategorySelected = { category -> searchQuery = ""; onCategoryChange(category) },
+            privateContent = {
+                PrivateLibrary(
+                    repository = driveRepository,
+                    query = searchQuery,
+                    mode = homeDisplayMode,
+                    scope = coroutineScope,
+                    onProfile = { onScreenChange(AppScreen.MyProfile) },
+                    onDocumentClick = { onScreenChange(AppScreen.PrivateDetail(it)) }
+                )
+            },
             onRegister = {
+                savePrivate = selectedCategory == PrivateCategory
+                registrationCategory = selectedCategory.takeIf { it in registrationCategories } ?: DefaultRegistrationCategory
                 if (selectedCategory == AllCategory) {
                     onCategoryChange(DefaultRegistrationCategory)
                 }
@@ -467,25 +505,28 @@ private fun FirebaseDocumentApp(
             onSettingsClick = { onScreenChange(AppScreen.Settings) },
             onSoftwareInfoClick = { onScreenChange(AppScreen.SoftwareInfo) },
             notificationsEnabled = notificationsEnabled,
+            notificationPermissionNeeded = notificationPermissionNeeded,
             onNotificationsClick = {
                 if (notificationsEnabled) {
                     coroutineScope.launch {
                         notificationManager.disable()
                             .onSuccess {
                                 notificationsEnabled = false
+                                notificationPermissionNeeded = false
                                 operationError = null
                             }
                             .onFailure { error ->
                                 // Local opt-out is deliberately committed before remote cleanup.
                                 notificationsEnabled = notificationManager.areNotificationsEnabled()
+                                notificationPermissionNeeded = notificationManager.needsNotificationPermission()
                                 operationError = error.message ?: "알림 해제에 실패했습니다."
                             }
                     }
-                } else if (
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                ) {
+                } else if (notificationPermissionNeeded && notificationManager.needsRuntimeNotificationPermission()) {
                     notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else if (notificationPermissionNeeded) {
+                    context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
                 } else {
                     enableNotifications()
                 }
@@ -501,15 +542,30 @@ private fun FirebaseDocumentApp(
             errorMessage = operationError ?: streamError,
         )
         AppScreen.Registration -> DocumentRegistrationScreen(
-            selectedCategory = selectedCategory,
-            onCategoryChange = onCategoryChange,
-            onBack = { onScreenChange(AppScreen.Home) },
+            selectedCategory = registrationCategory,
+            onCategoryChange = { registrationCategory = it },
+            onBack = { if (!isSaving) onScreenChange(AppScreen.Home) },
+            isPrivate = savePrivate,
+            onStorageChange = { savePrivate = it },
+            privateAccountKey = driveState.accountKey,
             isSaving = isSaving,
             saveError = operationError,
-            onSave = { document, searchableText ->
+            onSave = { document, searchableText, finished ->
                 coroutineScope.launch {
                     isSaving = true
                     operationError = null
+                    if (savePrivate) {
+                        if (driveState.email == null) {
+                            operationError = "내 자료를 사용하려면 내 정보에서 Google Drive를 연결해 주세요."
+                            finished(false)
+                        } else {
+                            driveRepository.save(document, searchableText.orEmpty())
+                                .onSuccess { finished(true); onCategoryChange(PrivateCategory); onScreenChange(AppScreen.Home) }
+                                .onFailure { finished(false); operationError = it.message }
+                        }
+                        isSaving = false
+                        return@launch
+                    }
                     repository.create(
                         FirebaseDocumentUpload(
                             document = document,
@@ -518,8 +574,10 @@ private fun FirebaseDocumentApp(
                             pdfUri = document.pdfUri
                         )
                     ).onSuccess { saved ->
+                        finished(true)
                         onScreenChange(AppScreen.Detail(saved))
                     }.onFailure { error ->
+                        finished(false)
                         operationError = error.message ?: "자료 저장에 실패했습니다."
                     }
                     isSaving = false
@@ -547,6 +605,17 @@ private fun FirebaseDocumentApp(
                             .onFailure { operationError = it.message ?: "자료 삭제에 실패했습니다." }
                     }
             }
+        )
+        is AppScreen.PrivateDetail -> PrivateDocumentDetailScreen(
+            repository = driveRepository,
+            selected = currentScreen.document,
+            onBack = { if (!driveState.busy) onScreenChange(AppScreen.Home) },
+            onImageClick = { imageUri -> onScreenChange(AppScreen.PrivateImageViewer(currentScreen.document, imageUri)) },
+            scope = coroutineScope
+        )
+        is AppScreen.PrivateImageViewer -> FullScreenImageViewer(
+            imageUri = currentScreen.imageUri,
+            onClose = { onScreenChange(AppScreen.PrivateDetail(currentScreen.document)) }
         )
         is AppScreen.ImageViewer -> FullScreenImageViewer(
             imageUri = currentScreen.imageUri,
@@ -595,10 +664,11 @@ private fun FirebaseDocumentApp(
             }
         )
         AppScreen.MyProfile -> MyProfileScreen(
+            driveContent = { DriveSettings(driveRepository) },
             displayName = currentProfile.displayName,
-            isSaving = isProfileSaving,
+            isSaving = isProfileSaving || driveState.busy,
             saveError = profileSaveError,
-            onBack = { onScreenChange(AppScreen.Home) },
+            onBack = { if (!driveState.busy) onScreenChange(AppScreen.Home) },
             onSave = { displayName ->
                 coroutineScope.launch {
                     isProfileSaving = true
@@ -760,6 +830,7 @@ private fun RequiredUserRegistrationScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MyProfileScreen(
+    driveContent: @Composable () -> Unit = {},
     displayName: String,
     isSaving: Boolean,
     saveError: String?,
@@ -786,7 +857,8 @@ private fun MyProfileScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+                .padding(horizontal = 24.dp, vertical = 32.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text("사용자 이름", fontWeight = FontWeight.Bold, color = Ink)
@@ -821,6 +893,7 @@ private fun MyProfileScreen(
                 }
                 Text("저장")
             }
+            driveContent()
         }
     }
 }
@@ -933,14 +1006,14 @@ private fun SoftwareInfoScreen(onBack: () -> Unit) {
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Version : FieldShare_v1.0", color = Color(0xFF5E6878))
-            Text("Developer : Kim Young-soo", color = Color(0xFF5E6878))
+            Text("Version : FieldShare_v2.1", color = Color(0xFF5E6878))
+            Text("Developer : Kim Young-su", color = Color(0xFF5E6878))
             Text("Development Tool : Android Studio", color = Color(0xFF5E6878))
             Text("Programming Language : Kotlin", color = Color(0xFF5E6878))
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("UI Framework : Jetpack Compose", color = Color(0xFF5E6878))
                 Text(
-                    text = "(2026. 8. 31)",
+                    text = "(2026. 9. 8)",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF8A94A6)
                 )
@@ -957,6 +1030,8 @@ private sealed interface AppScreen {
     data object Settings : AppScreen
     data object SoftwareInfo : AppScreen
     data class Detail(val document: FieldDocument) : AppScreen
+    data class PrivateDetail(val document: PrivateDocument) : AppScreen
+    data class PrivateImageViewer(val document: PrivateDocument, val imageUri: String) : AppScreen
     data class ImageViewer(val document: FieldDocument, val imageUri: String?) : AppScreen
     data class EditTextDocument(val document: FieldDocument) : AppScreen
 }
@@ -966,7 +1041,7 @@ enum class DocumentSource { IMAGE, TEXT }
 private const val AllCategory = "전체"
 private const val DefaultRegistrationCategory = "기타"
 private val registrationCategories = listOf("냉장고", "에어컨", "세탁기", "TV", "컴퓨터", "프린터", "자재", "기타")
-private val homeCategories = listOf(AllCategory) + registrationCategories
+internal val homeCategories = listOf(AllCategory, PrivateCategory) + registrationCategories
 
 data class FieldDocument(
     val id: String,
@@ -1113,6 +1188,7 @@ private val sampleDocuments = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FieldShareHomeScreen(
+    privateContent: @Composable () -> Unit = {},
     documents: List<FieldDocument> = sampleDocuments,
     searchQuery: String = "",
     onSearchQueryChange: (String) -> Unit = {},
@@ -1126,6 +1202,7 @@ fun FieldShareHomeScreen(
     onSettingsClick: () -> Unit = {},
     onSoftwareInfoClick: () -> Unit = {},
     notificationsEnabled: Boolean = false,
+    notificationPermissionNeeded: Boolean = false,
     onNotificationsClick: () -> Unit = {},
     onDocumentClick: (FieldDocument) -> Unit = {},
     resolveThumbnailUrl: suspend (String) -> String? = { imagePath -> imagePath },
@@ -1152,7 +1229,7 @@ fun FieldShareHomeScreen(
                 modifier = Modifier.background(Brush.verticalGradient(listOf(SamsungBlueDark, SamsungBlue)))
             ) {
                 CenterAlignedTopAppBar(
-                    title = { Text("삼성서비스 자료공유", fontWeight = FontWeight.Bold) },
+                    title = { Text("삼성남인천 자료공유", fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         Box {
                             IconButton(onClick = { menuExpanded = true }) {
@@ -1203,8 +1280,12 @@ fun FieldShareHomeScreen(
                         }
                         IconButton(onClick = onNotificationsClick) {
                             Icon(
-                                imageVector = if (notificationsEnabled) Icons.Default.Notifications else Icons.Default.NotificationsOff,
-                                contentDescription = if (notificationsEnabled) "신규 자료 알림 켜짐" else "신규 자료 알림 켜기"
+                                imageVector = if (notificationsEnabled || notificationPermissionNeeded) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                                contentDescription = when {
+                                    notificationsEnabled -> "신규 자료 알림 켜짐"
+                                    notificationPermissionNeeded -> "신규 자료 알림 권한 필요"
+                                    else -> "신규 자료 알림 켜기"
+                                }
                             )
                         }
                     },
@@ -1252,18 +1333,20 @@ fun FieldShareHomeScreen(
                 end = 16.dp,
                 bottom = innerPadding.calculateBottomPadding() + 88.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(if (selectedCategory == PrivateCategory) 4.dp else 14.dp)
         ) {
-            item {
-                Text(
-                    text = "최신 등록순",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Ink.copy(alpha = 0.72f),
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
+            if (selectedCategory != PrivateCategory) item {
+                Row(modifier = Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "최신 등록순",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Ink.copy(alpha = 0.72f),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
             when {
+                selectedCategory == PrivateCategory -> item { privateContent() }
                 hasSearchQuery && searchQuery.trim().length < minimumSearchQueryLength -> item {
                     FirebaseListMessage(homeSearchMinimumQueryMessage(homeDisplayMode, currentSearchRoute))
                 }
@@ -1793,36 +1876,66 @@ private fun deviceTypeLabel(deviceType: String): String = when (deviceType) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DocumentRegistrationScreen(
+internal fun DocumentRegistrationScreen(
+    existingDraftId: String? = null,
+    isPrivate: Boolean = false,
+    onStorageChange: (Boolean) -> Unit = {},
+    privateAccountKey: String? = null,
     selectedCategory: String,
     onCategoryChange: (String) -> Unit,
     onBack: () -> Unit,
-    onSave: (FieldDocument, String?) -> Unit,
+    onSave: (FieldDocument, String?, (Boolean) -> Unit) -> Unit,
     isSaving: Boolean = false,
     saveError: String? = null
 ) {
-    var title by rememberSaveable { mutableStateOf("") }
-    var content by rememberSaveable { mutableStateOf("") }
-    var selectedImageUri by rememberSaveable { mutableStateOf<String?>(null) }
-    var scannedImageUris by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    var pendingCameraFilePath by rememberSaveable { mutableStateOf<String?>(null) }
+    val baseContext = LocalContext.current
+    val draftId = rememberSaveable { existingDraftId ?: java.util.UUID.randomUUID().toString() }
+    val context = remember(privateAccountKey, draftId) { PrivateRegistrationContext(baseContext, privateAccountKey ?: "unconnected", draftId) }
+    val restored = remember(context) { context.readSnapshot() }
+    var title by remember(context) { mutableStateOf(restored?.optString("title").orEmpty()) }
+    var content by remember(context) { mutableStateOf(restored?.optString("content").orEmpty()) }
+    var selectedImageUri by remember(context) { mutableStateOf(restored?.optString("image")?.takeIf { it.isNotBlank() }) }
+    var scannedImageUris by remember(context) { mutableStateOf(restored?.optJSONArray("scans")?.strings().orEmpty()) }
+    var pendingCameraFilePath by remember(context) { mutableStateOf(restored?.optString("camera")?.takeIf { it.isNotBlank() }) }
     var selectionNotice by rememberSaveable { mutableStateOf<String?>(null) }
     var attachmentPreparationError by rememberSaveable { mutableStateOf<String?>(null) }
-    var isImageOptimizing by rememberSaveable { mutableStateOf(false) }
-    var isOcrExtracting by rememberSaveable { mutableStateOf(false) }
-    var ocrStatus by rememberSaveable { mutableStateOf(OcrStatus.NOT_REQUESTED) }
-    var ocrSearchText by remember { mutableStateOf<String?>(null) }
+    var isImageOptimizing by remember { mutableStateOf(false) }
+    var isOcrExtracting by remember { mutableStateOf(false) }
+    var isRestoringDraft by remember { mutableStateOf(true) }
+    var ocrStatus by remember(context) { mutableStateOf(runCatching { OcrStatus.valueOf(restored!!.getString("ocrStatus")) }.getOrDefault(OcrStatus.NOT_REQUESTED)) }
+    var ocrSearchText by remember(context) { mutableStateOf(restored?.optString("ocr")?.takeIf { it.isNotBlank() }) }
     var titleEditedByUser by rememberSaveable { mutableStateOf(false) }
     var titleAutofilled by rememberSaveable { mutableStateOf(false) }
     var categoryMenuExpanded by remember { mutableStateOf(false) }
     val categoryInteractionSource = remember { MutableInteractionSource() }
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    DisposableEffect(pendingCameraFilePath) {
-        onDispose {
-            pendingCameraFilePath?.let(::File)?.delete()
-        }
+    var draftInitialized by rememberSaveable { mutableStateOf(false) }
+    // Read state during composition so OCR-only changes also schedule a snapshot write.
+    val draftSnapshot = org.json.JSONObject().put("title", title).put("content", content)
+            .put("image", selectedImageUri ?: "")
+            .put("scans", org.json.JSONArray(scannedImageUris)).put("camera", pendingCameraFilePath ?: "")
+            .put("ocrStatus", ocrStatus.name).put("ocr", ocrSearchText ?: "")
+    androidx.compose.runtime.SideEffect { context.writeSnapshot(draftSnapshot) }
+    DisposableEffect(context) {
+        context.acquire()
+        PrivateRegistrationContext.cleanupStale(baseContext)
+        onDispose { context.release() }
     }
+    val cancelRegistration = { if (!isSaving && !isImageOptimizing && !isOcrExtracting) { context.endSave(); context.clearDraft(); onBack() } }
+    BackHandler(onBack = cancelRegistration)
+    LaunchedEffect(context) {
+        if (draftInitialized && restored == null) selectionNotice = "초안 임시파일이 정리되어 복원할 수 없습니다. 내용을 입력하고 다시 첨부해 주세요."
+        draftInitialized = true
+        val uris = scannedImageUris.ifEmpty { listOfNotNull(selectedImageUri) }
+        val missing = withContext(Dispatchers.IO) { uris.any { !context.readable(it) } }
+        if (missing) attachmentPreparationError = "첨부 임시파일이 없어 복원할 수 없습니다. 이미지를 다시 첨부하거나 직접 입력으로 전환해 주세요."
+        if (ocrStatus == OcrStatus.PENDING || (ocrStatus == OcrStatus.COMPLETED && ocrSearchText.isNullOrBlank()) || missing) {
+            ocrStatus = OcrStatus.FAILED; ocrSearchText = null
+            selectionNotice = "중단된 이미지/OCR 처리를 복원하지 못했습니다. 다시 첨부해 주세요."
+        }
+        pendingCameraFilePath?.let { if (!File(it).exists()) { pendingCameraFilePath = null; selectionNotice = "촬영 대기 파일이 없습니다. 다시 촬영해 주세요." } }
+        isRestoringDraft = false
+    }
+    val coroutineScope = rememberCoroutineScope()
     val extractOcr: (List<Uri>, String) -> Unit = { imageUris, completionNotice ->
         isOcrExtracting = true
         ocrStatus = OcrStatus.PENDING
@@ -1948,12 +2061,11 @@ private fun DocumentRegistrationScreen(
         val capturedFile = pendingCameraFilePath?.let(::File)
         val capturedUri = capturedFile?.let { file ->
             try {
-                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                FileProvider.getUriForFile(context.applicationContext, "${context.packageName}.fileprovider", file)
             } catch (error: Throwable) {
                 Log.e(
                     "FieldShareImage",
-                    "카메라 이미지 URI 생성 실패: ${error.javaClass.simpleName}: ${error.message}",
-                    error
+                    "카메라 이미지 URI 생성 실패: ${error.javaClass.simpleName}"
                 )
                 null
             }
@@ -2000,7 +2112,7 @@ private fun DocumentRegistrationScreen(
                 )
             )
         },
-        bottomBar = { BottomBackNavigationBar(onBack) }
+        bottomBar = { BottomBackNavigationBar(cancelRegistration) }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -2010,6 +2122,13 @@ private fun DocumentRegistrationScreen(
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Text("저장 위치: " + if (isPrivate) "내 자료" else "공유 자료", fontWeight = FontWeight.Bold)
+            Row {
+                FilterChip(selected = !isPrivate, onClick = { onStorageChange(false) }, enabled = !isSaving, label = { Text("공유 자료") })
+                Spacer(Modifier.width(8.dp))
+                FilterChip(selected = isPrivate, onClick = { onStorageChange(true) }, enabled = !isSaving, label = { Text("내 자료") })
+            }
+            if (isPrivate && privateAccountKey == null) Text("내 자료를 사용하려면 내 정보에서 Google Drive를 연결해 주세요.")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 RegisterMethodCard(
                     title = "문서 스캔",
@@ -2052,7 +2171,7 @@ private fun DocumentRegistrationScreen(
                                 pendingCameraFilePath = cameraFile.absolutePath
                                 cameraLauncher.launch(
                                     FileProvider.getUriForFile(
-                                        context,
+                                        context.applicationContext,
                                         "${context.packageName}.fileprovider",
                                         cameraFile
                                     )
@@ -2088,6 +2207,7 @@ private fun DocumentRegistrationScreen(
                     onClick = {
                         if (!isImageOptimizing && !isOcrExtracting) {
                             selectedImageUri = null
+                            attachmentPreparationError = null
                             scannedImageUris = emptyList()
                             ocrSearchText = null
                             ocrStatus = OcrStatus.NOT_REQUESTED
@@ -2141,9 +2261,10 @@ private fun DocumentRegistrationScreen(
                     )
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                RegistrationLabel("카테고리")
-                ExposedDropdownMenuBox(
+            if (!isPrivate) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    RegistrationLabel("카테고리")
+                    ExposedDropdownMenuBox(
                     expanded = categoryMenuExpanded,
                     onExpandedChange = { categoryMenuExpanded = !categoryMenuExpanded },
                     modifier = Modifier.fillMaxWidth()
@@ -2211,6 +2332,7 @@ private fun DocumentRegistrationScreen(
                             )
                         }
                     }
+                    }
                 }
             }
             RegistrationLabel("내용")
@@ -2225,9 +2347,10 @@ private fun DocumentRegistrationScreen(
             Button(
                 onClick = {
                     val documentTitle = title.ifBlank { "제목 없는 자료" }
-                    val documentCategory = selectedCategory.ifBlank { DefaultRegistrationCategory }
+                    val documentCategory = if (isPrivate) PrivateCategory else selectedCategory.ifBlank { DefaultRegistrationCategory }
                     val hasAttachment = selectedImageUri != null || scannedImageUris.isNotEmpty()
                     val documentContent = contentForDocumentSave(hasAttachment, content)
+                    context.beginSave()
                     onSave(
                         FieldDocument(
                             id = "local-${System.currentTimeMillis()}",
@@ -2239,14 +2362,16 @@ private fun DocumentRegistrationScreen(
                             description = documentContent.take(80),
                             imageUri = selectedImageUri,
                             imageUris = scannedImageUris,
+                            pdfUri = null,
                             ocrStatus = ocrStatus,
                             thumbnailColor = if (hasAttachment) Color(0xFFE5F2FF) else Color(0xFFEAE4FA),
                             icon = if (hasAttachment) Icons.Default.Image else Icons.Default.Description
                         ),
-                        ocrSearchText.takeIf { ocrStatus == OcrStatus.COMPLETED }
+                        ocrSearchText.takeIf { ocrStatus == OcrStatus.COMPLETED },
+                        { success -> context.endSave(); if (success) context.clearDraft() }
                     )
                 },
-                enabled = !isImageOptimizing && !isOcrExtracting && !isSaving && attachmentPreparationError == null,
+                enabled = !isRestoringDraft && !isImageOptimizing && !isOcrExtracting && !isSaving && attachmentPreparationError == null,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SamsungBlue)
@@ -2254,7 +2379,7 @@ private fun DocumentRegistrationScreen(
                 if (isSaving) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
                 } else {
-                    Text("저장 후 공유", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(if (isPrivate) "내 자료 저장" else "저장 후 공유", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             }
             Row(
@@ -2264,7 +2389,7 @@ private fun DocumentRegistrationScreen(
             ) {
                 Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF858E9C), modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("저장 시 모든 기기에 자동 공유", color = Color(0xFF7E8795), style = MaterialTheme.typography.bodySmall)
+                Text(if (isPrivate) "기기에 안전하게 저장된 뒤 Google Drive와 동기화됩니다." else "저장 시 모든 기기에 자동 공유", color = Color(0xFF7E8795), style = MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(12.dp))
         }
@@ -2743,7 +2868,7 @@ private fun DocumentDetailScreen(
 }
 
 @Composable
-private fun TextDocumentContent(content: String) {
+internal fun TextDocumentContent(content: String) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = "내용",
@@ -2751,18 +2876,21 @@ private fun TextDocumentContent(content: String) {
             fontWeight = FontWeight.Bold,
             color = Ink
         )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            border = BorderStroke(1.dp, BorderGray),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-        ) {
-            LinkedDocumentText(
-                content = content,
-                modifier = Modifier.padding(18.dp),
-            )
-        }
+        TextDocumentContentBody(content)
+    }
+}
+
+/** Reusable body lets private text details place their own title-row controls without changing styling. */
+@Composable
+internal fun TextDocumentContentBody(content: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, BorderGray),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        LinkedDocumentText(content = content, modifier = Modifier.padding(18.dp))
     }
 }
 
@@ -3038,7 +3166,7 @@ private fun ImageUnavailablePlaceholder(message: String) {
 private fun createCameraCacheFile(context: Context): File? = runCatching {
     File.createTempFile("fieldshare_camera_", ".jpg", context.cacheDir)
 }.onFailure { error ->
-    Log.e("FieldShareImage", "카메라 임시 파일 생성 실패: ${error.javaClass.simpleName}: ${error.message}", error)
+    Log.e("FieldShareImage", "카메라 임시 파일 생성 실패: ${error.javaClass.simpleName}")
 }.getOrNull()
 
 private fun optimizeImageUrisToFileProviderUris(
@@ -3063,8 +3191,7 @@ private fun optimizeImageUrisToFileProviderUris(
     }.onFailure { error ->
         Log.e(
             logTag,
-            "이미지 ${index + 1}장 최적화 준비 실패: uri=$sourceUri, ${error.javaClass.simpleName}: ${error.message}",
-            error
+            "이미지 ${index + 1}장 최적화 준비 실패"
         )
     }
 }
@@ -3082,7 +3209,7 @@ private fun copyImageUriToCache(
     val directory = File(context.cacheDir, "registration-images")
     if (!directory.exists() && !directory.mkdirs()) {
         val error = ImageOptimizationException("이미지 임시 폴더를 만들 수 없습니다.")
-        Log.e(logTag, "이미지 ${imageNumber}장 캐시 폴더 생성 실패: ${error.javaClass.simpleName}: ${error.message}", error)
+        Log.e(logTag, "이미지 ${imageNumber}장 캐시 폴더 생성 실패")
         throw error
     }
     val outputFile = File.createTempFile("fieldshare_${cachePrefix}_${imageNumber}_", ".jpg", directory)
@@ -3095,8 +3222,7 @@ private fun copyImageUriToCache(
     } catch (error: Throwable) {
         Log.e(
             logTag,
-            "이미지 ${imageNumber}장 캐시 복사 실패: uri=$sourceUri, ${error.javaClass.simpleName}: ${error.message}",
-            error
+            "이미지 ${imageNumber}장 캐시 복사 실패"
         )
         outputFile.delete()
         throw error
@@ -3105,7 +3231,7 @@ private fun copyImageUriToCache(
         validateImageSourceFile(outputFile)
         return outputFile
     } catch (error: Throwable) {
-        Log.e(logTag, "이미지 ${imageNumber}장 캐시 파일 검증 실패: ${error.javaClass.simpleName}: ${error.message}", error)
+        Log.e(logTag, "이미지 ${imageNumber}장 캐시 파일 검증 실패")
         outputFile.delete()
         throw error
     }
@@ -3247,7 +3373,7 @@ private fun DocumentRegistrationPreview() {
             selectedCategory = DefaultRegistrationCategory,
             onCategoryChange = {},
             onBack = {},
-            onSave = { _, _ -> }
+            onSave = { _, _, _ -> }
         )
     }
 }

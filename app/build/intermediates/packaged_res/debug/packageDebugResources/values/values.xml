@@ -7,7 +7,7 @@
     <color name="teal_200">#FF03DAC5</color>
     <color name="teal_700">#FF018786</color>
     <color name="white">#FFFFFFFF</color>
-    <string name="app_name">삼성서비스 자료공유</string>
+    <string name="app_name">삼성남인천 자료공유</string>
     <string name="firebase_database_url" translatable="false">https://fieldshare-cf760-default-rtdb.europe-west1.firebasedatabase.app</string>
     <string name="gcm_defaultSenderId" translatable="false">173877115505</string>
     <string name="google_api_key" translatable="false">AIzaSyAMrp-d1HfYSdlxEfHdF46NVOPJ1SGW4SU</string>
