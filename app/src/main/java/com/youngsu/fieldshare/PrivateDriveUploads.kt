@@ -73,9 +73,18 @@ internal fun cleanupCompletedQueueAttachments(planFile: File, plan: JSONObject) 
     job.deleteRecursively()
 }
 
-internal fun privateFileMetadata(folder: String, documentId: String, kind: String, name: String) = JSONObject()
+internal fun privateFileMetadata(folder: String, documentId: String, kind: String, name: String,
+    document: PrivateDocument? = null) = JSONObject()
     .put("name", name).put("parents", JSONArray(listOf(folder)))
-    .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", kind).put("documentId", documentId))
+    .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", kind).put("documentId", documentId).apply {
+        if (document != null && kind == "metadata") {
+            put("listDocumentId", document.id).put("listRevision", document.revision)
+                .put("listTitle", document.title.take(500)).put("listCategory", document.category.take(200))
+                .put("listCreated", document.created.toString()).put("listModified", document.modified.toString())
+                .put("listPinned", document.pinned.toString())
+            if (document.thumbnailUrl.isNotBlank()) put("listThumbnail", document.thumbnailUrl)
+        }
+    })
 
 /** Upload the persisted transaction; never publish metadata before every attachment has succeeded. */
 internal class PrivateDriveUploads(private val api: PrivateDriveApi, private val local: PrivateMetadataCache) {
@@ -100,7 +109,7 @@ internal class PrivateDriveUploads(private val api: PrivateDriveApi, private val
         }
         val lineage = PrivateLineage.of(document)
         ensureQueueActive(file)
-        api.create(document.fileId, privateFileMetadata(folder, document.id, "metadata", "${document.id}-${document.revision}.json"), document.json().toString().toByteArray())
+        api.create(document.fileId, privateFileMetadata(folder, document.id, "metadata", "${document.id}-${document.revision}.json", document), document.json().toString().toByteArray())
         // The commit receipt is written last: a cancelled, never-published revision must not
         // suppress its parent. Neither upload alone is reported as a completed save.
         ensureQueueActive(file)

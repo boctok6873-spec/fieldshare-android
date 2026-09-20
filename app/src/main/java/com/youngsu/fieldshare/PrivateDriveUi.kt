@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -179,25 +181,32 @@ internal fun PrivateLibrary(repository: DriveConnectionRepository, query: String
             }
         }
         DriveProgress(repository, state, showNormalProgress = false)
-        run {
-            val matching = searchPrivateDocuments(state.documents, query)
-            val visible = if (query.isNotBlank()) matching else when (mode) {
-                HomeDocumentDisplayMode.ALL -> matching
-                HomeDocumentDisplayMode.RECENT_ONLY -> matching.take(10)
-                HomeDocumentDisplayMode.HIDDEN -> emptyList()
+        val matching = searchPrivateDocuments(state.documents, query)
+        val visible = if (query.isNotBlank()) matching else when (mode) {
+            HomeDocumentDisplayMode.ALL -> matching
+            HomeDocumentDisplayMode.RECENT_ONLY -> matching.take(10)
+            HomeDocumentDisplayMode.HIDDEN -> emptyList()
+        }
+        if (state.syncing) {
+            Text("자료를 불러오는 중이며, 확인된 자료부터 표시됩니다.", style = MaterialTheme.typography.bodySmall)
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(vertical = 2.dp)
+        ) {
+            if (visible.isEmpty()) item {
+                Text(when {
+                    state.syncing || state.busy -> "개인 자료를 불러오는 중…"
+                    query.isNotBlank() -> "동기화된 자료에서 검색 결과가 없습니다."
+                    mode == HomeDocumentDisplayMode.HIDDEN -> "홈 화면 자료 표시가 꺼져 있습니다. 검색은 사용할 수 있습니다."
+                    else -> "등록된 개인 자료가 없습니다."
+                })
             }
-            if (visible.isEmpty()) Text(when {
-                state.syncing || state.busy -> "개인 자료를 불러오는 중…"
-                query.isNotBlank() -> "동기화된 자료에서 검색 결과가 없습니다."
-                mode == HomeDocumentDisplayMode.HIDDEN -> "홈 화면 자료 표시가 꺼져 있습니다. 검색은 사용할 수 있습니다."
-                else -> "등록된 개인 자료가 없습니다."
-            })
-            visible.forEach { document ->
-                PrivateDocumentCard(
-                    repository = repository,
-                    document = document,
-                    onClick = { onDocumentClick(document) }
-                )
+            items(visible, key = { document ->
+                document.fileId.ifBlank { "${document.id}:${document.revision}" }
+            }) { document ->
+                PrivateDocumentCard(repository = repository, document = document, onClick = { onDocumentClick(document) })
             }
         }
     }
@@ -436,13 +445,13 @@ private fun PrivateDocumentCard(repository: DriveConnectionRepository, document:
                 modifier = Modifier.padding(10.dp).padding(end = if (showPinnedIndicator) 24.dp else 0.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                PrivateThumbnail(repository, document)
+                PrivateThumbnail(document)
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(document.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, color = Ink)
                     Spacer(Modifier.height(8.dp))
-                    Text(document.content.ifBlank { "첨부파일 ${document.attachments.size}개" },
+                    Text(if (!document.detailsLoaded) "상세 정보를 불러오는 중…" else document.content.ifBlank { "첨부파일 ${document.attachments.size}개" },
                         style = MaterialTheme.typography.bodySmall, color = Ink.copy(alpha = 0.67f),
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(6.dp))
@@ -504,19 +513,15 @@ internal fun resolvePrivateDetailDocument(selected: PrivateDocument, heads: Coll
 }
 
 @Composable
-private fun PrivateThumbnail(repository: DriveConnectionRepository, document: PrivateDocument) {
-    val image = document.attachments.firstOrNull { it.mime.startsWith("image/") }
-    val file by produceState<java.io.File?>(initialValue = null, key1 = document.fileId, key2 = image?.id) {
-        value = image?.let { repository.thumbnail(it).getOrNull() }
-    }
+private fun PrivateThumbnail(document: PrivateDocument) {
     Surface(
         modifier = Modifier.size(width = 96.dp, height = 104.dp),
         shape = MaterialTheme.shapes.small,
         color = SamsungBlueLight
     ) {
-        if (file != null) {
+        if (document.thumbnailUrl.isNotBlank()) {
             SubcomposeAsyncImage(
-                model = file,
+                model = document.thumbnailUrl,
                 contentDescription = "${document.title} 썸네일",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

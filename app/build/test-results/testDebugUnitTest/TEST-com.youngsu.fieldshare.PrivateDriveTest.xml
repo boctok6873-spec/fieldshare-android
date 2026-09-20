@@ -1,45 +1,47 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.PrivateDriveTest" tests="39" skipped="0" failures="0" errors="0" timestamp="2026-09-20T01:38:35.240Z" hostname="BOCTOK-PC" time="0.567">
+<testsuite name="com.youngsu.fieldshare.PrivateDriveTest" tests="41" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:19:17.002Z" hostname="BOCTOK-PC" time="0.301">
   <properties/>
-  <testcase name="privateDeleteSyncButtonDisablesUntilCleanupAndRestoresAfterward" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.006"/>
-  <testcase name="detailTracksNewestLogicalRevisionAfterPinToggleAndEdit" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
-  <testcase name="deleteRacingWithEditRemainsAnExplicitConflict" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.004"/>
-  <testcase name="cancelledCleanupNetworkFailureIsRetryableAndLaterCompletesWithoutReupload" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.198"/>
-  <testcase name="expiredChangeTokenTriggersFullResync" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.013"/>
-  <testcase name="partialSyncDoesNotClaimCompletionAndCanRetry" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.009"/>
-  <testcase name="categoryOrderAndLocalSubstringSearch" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.003"/>
+  <testcase name="privateDeleteSyncButtonDisablesUntilCleanupAndRestoresAfterward" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.005"/>
+  <testcase name="detailTracksNewestLogicalRevisionAfterPinToggleAndEdit" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
+  <testcase name="appPropertiesCreateLightweightListSummaryWithoutDetailPayload" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.003"/>
+  <testcase name="deleteRacingWithEditRemainsAnExplicitConflict" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
+  <testcase name="cancelledCleanupNetworkFailureIsRetryableAndLaterCompletesWithoutReupload" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.106"/>
+  <testcase name="expiredChangeTokenTriggersFullResync" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.005"/>
+  <testcase name="partialSyncDoesNotClaimCompletionAndCanRetry" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.004"/>
+  <testcase name="categoryOrderAndLocalSubstringSearch" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
   <testcase name="detailShowsMissingOnlyWhenNoCurrentHeadOrTheHeadIsDeletedOrUnavailable" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
-  <testcase name="cancelledQueueJournalCannotBeOverwrittenByUploaderSnapshot" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.015"/>
-  <testcase name="privateDeleteReturnsToListBeforeBackgroundJournalWork" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
-  <testcase name="deleteJournalIsNotMistakenForARecoverableSave" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.004"/>
+  <testcase name="cancelledQueueJournalCannotBeOverwrittenByUploaderSnapshot" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.007"/>
+  <testcase name="privateDeleteReturnsToListBeforeBackgroundJournalWork" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
+  <testcase name="deleteJournalIsNotMistakenForARecoverableSave" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
   <testcase name="displayedIdentityMustMatchAuthorizedAccountAndGrantedDriveScope" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="cancellationDuringUploadStopsBeforeReceiptAndKeepsRecoveryJournal" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.03"/>
+  <testcase name="cancellationDuringUploadStopsBeforeReceiptAndKeepsRecoveryJournal" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.012"/>
   <testcase name="pinnedOrderingIsRetainedForSearchAndRecentMode" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="privateDeleteFailureRetainsErrorAndRetryEligibility" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="accountQueueLockSerializesCancellationStateWrites" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.02"/>
+  <testcase name="privateDeleteFailureRetainsErrorAndRetryEligibility" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
+  <testcase name="accountQueueLockSerializesCancellationStateWrites" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.01"/>
   <testcase name="pinnedStatePersistsInMetadataAndOrdersOnlyCompletedValidHeadsFirst" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
-  <testcase name="deletionPartialFailureRetainsOnlyUnfinishedExactTargets" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.007"/>
-  <testcase name="authorizationRequiredDeleteJournalResumesCleanupWithoutUploadPlan" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="revisionAttachmentsAreCopiedOnDriveWithoutOriginalDownloads" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.029"/>
-  <testcase name="reconnectFindsMarkedFolderAcrossPagesWithoutLocalIdOrName" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.006"/>
-  <testcase name="schemaRoundTripContainsNoFirebaseOrAccountFields" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.004"/>
-  <testcase name="privateDeleteJournalSurvivesMetadataCommitUntilDriveCleanupCompletes" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.029"/>
-  <testcase name="durablePendingSaveIsVisibleWithKoreanRetryStateAfterRestart" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.008"/>
-  <testcase name="concurrentRevisionsPreserveBothEdits" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.003"/>
-  <testcase name="privateSyncButtonTracksQueuedUploadAndPreventsDuplicateSync" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="stableAccountKeyDoesNotUseDisplayNameAndIsolatesAccounts" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.012"/>
-  <testcase name="homeMigrationRunsOnceForEveryPreviousValueAndRetainsLaterChoice" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.004"/>
-  <testcase name="actionRequiredAndCancelledJobsCannotBeAutomaticallyStarted" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="cancelledCleanupAuthFailureKeepsCancellationIntentUntilReauthorized" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.027"/>
-  <testcase name="quotaPermissionAndRateErrorsAreSafeAndActionable" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="externalRemovalMustNotPromoteAncestor" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.009"/>
-  <testcase name="queueKeepsMultipleOfflineSavesAndTheirLocalAttachmentsSeparate" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.015"/>
-  <testcase name="completedLegacyJournalNeverDeletesAccountOrOtherQueueJobs" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.021"/>
-  <testcase name="firstSyncPaginatesMetadataAndReplaysConcurrentChangesWithoutDownloadingOriginals" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.006"/>
-  <testcase name="deleteRetryReusesExistingJournalAndCleanupTargets" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
-  <testcase name="cancelledMetadataIsFinalizedOnlyAfterConfirmedRemoteRead" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.023"/>
-  <testcase name="failedAttachmentNeverPublishesMetadataAndRetryReusesIds" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.043"/>
-  <testcase name="pinnedListIndicatorUsesTheSameValidHeadConditionAsSorting" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
+  <testcase name="deletionPartialFailureRetainsOnlyUnfinishedExactTargets" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
+  <testcase name="authorizationRequiredDeleteJournalResumesCleanupWithoutUploadPlan" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
+  <testcase name="revisionAttachmentsAreCopiedOnDriveWithoutOriginalDownloads" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.021"/>
+  <testcase name="reconnectFindsMarkedFolderAcrossPagesWithoutLocalIdOrName" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
+  <testcase name="schemaRoundTripContainsNoFirebaseOrAccountFields" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
+  <testcase name="privateDeleteJournalSurvivesMetadataCommitUntilDriveCleanupCompletes" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.018"/>
+  <testcase name="durablePendingSaveIsVisibleWithKoreanRetryStateAfterRestart" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.004"/>
+  <testcase name="concurrentRevisionsPreserveBothEdits" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.001"/>
+  <testcase name="privateSyncButtonTracksQueuedUploadAndPreventsDuplicateSync" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
+  <testcase name="stableAccountKeyDoesNotUseDisplayNameAndIsolatesAccounts" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.003"/>
+  <testcase name="homeMigrationRunsOnceForEveryPreviousValueAndRetainsLaterChoice" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.002"/>
+  <testcase name="actionRequiredAndCancelledJobsCannotBeAutomaticallyStarted" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
+  <testcase name="cancelledCleanupAuthFailureKeepsCancellationIntentUntilReauthorized" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.015"/>
+  <testcase name="quotaPermissionAndRateErrorsAreSafeAndActionable" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
+  <testcase name="externalRemovalMustNotPromoteAncestor" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.004"/>
+  <testcase name="queueKeepsMultipleOfflineSavesAndTheirLocalAttachmentsSeparate" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.006"/>
+  <testcase name="completedLegacyJournalNeverDeletesAccountOrOtherQueueJobs" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.011"/>
+  <testcase name="firstSyncPaginatesMetadataAndReplaysConcurrentChangesWithoutDownloadingOriginals" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.003"/>
+  <testcase name="fullSyncPublishesFirstSummaryBeforeLaterDrivePages" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.003"/>
+  <testcase name="deleteRetryReusesExistingJournalAndCleanupTargets" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
+  <testcase name="cancelledMetadataIsFinalizedOnlyAfterConfirmedRemoteRead" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.015"/>
+  <testcase name="failedAttachmentNeverPublishesMetadataAndRetryReusesIds" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.02"/>
+  <testcase name="pinnedListIndicatorUsesTheSameValidHeadConditionAsSorting" classname="com.youngsu.fieldshare.PrivateDriveTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

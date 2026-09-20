@@ -51,7 +51,7 @@ internal class DriveApi(private val token: suspend () -> String) : PrivateDriveA
     suspend fun userInfo(): JSONObject = JSONObject(String(request("oauth2/v3/userinfo")))
     override suspend fun list(query: String, page: String?): DrivePage {
         val params = mutableMapOf("q" to query, "spaces" to "drive", "pageSize" to "100",
-            "fields" to "nextPageToken,files(id,trashed,appProperties,mimeType,version)")
+            "fields" to "nextPageToken,files(id,trashed,appProperties,mimeType,version,thumbnailLink)")
         page?.let { params["pageToken"] = it }
         val json = JSONObject(String(request("drive/v3/files", params)))
         val a = json.getJSONArray("files")
@@ -60,7 +60,7 @@ internal class DriveApi(private val token: suspend () -> String) : PrivateDriveA
     override suspend fun startToken() = JSONObject(String(request("drive/v3/changes/startPageToken"))).getString("startPageToken")
     override suspend fun changes(page: String): DrivePage {
         val json = JSONObject(String(request("drive/v3/changes", mapOf("pageToken" to page, "pageSize" to "100",
-            "spaces" to "drive", "fields" to "nextPageToken,newStartPageToken,changes(fileId,removed,file(id,trashed,appProperties,mimeType,version))"))))
+            "spaces" to "drive", "fields" to "nextPageToken,newStartPageToken,changes(fileId,removed,file(id,trashed,appProperties,mimeType,version,thumbnailLink))"))))
         val a = json.getJSONArray("changes")
         return DrivePage((0 until a.length()).map { a.getJSONObject(it) }, json.optString("nextPageToken").takeIf { it.isNotBlank() },
             json.optString("newStartPageToken").takeIf { it.isNotBlank() })

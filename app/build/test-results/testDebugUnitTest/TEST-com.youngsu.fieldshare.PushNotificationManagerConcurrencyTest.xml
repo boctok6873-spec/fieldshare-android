@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.PushNotificationManagerConcurrencyTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-20T01:38:35.810Z" hostname="BOCTOK-PC" time="0.068">
+<testsuite name="com.youngsu.fieldshare.PushNotificationManagerConcurrencyTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:19:17.305Z" hostname="BOCTOK-PC" time="0.035">
   <properties/>
-  <testcase name="disableAndTokenRefresh_areSerializedSoOptOutCannotBeRelinked" classname="com.youngsu.fieldshare.PushNotificationManagerConcurrencyTest" time="0.068"/>
+  <testcase name="disableAndTokenRefresh_areSerializedSoOptOutCannotBeRelinked" classname="com.youngsu.fieldshare.PushNotificationManagerConcurrencyTest" time="0.035"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

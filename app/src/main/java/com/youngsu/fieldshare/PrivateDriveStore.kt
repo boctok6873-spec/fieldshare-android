@@ -125,11 +125,40 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
             markMissing(id, PrivateRemoteState.TRASHED); return
         }
         val version = file.optString("version")
-        if (store.versions[id] == version && store.revisions[id]?.remoteState in
+        privateSummaryFromProperties(id, properties, file.optString("thumbnailLink")).let { summary ->
+            if (summary != null) {
+                val current = store.revisions[id]
+                if (current != null && store.versions[id] == version && current.detailsLoaded) {
+                    store.revisions[id] = current.copy(
+                        title = summary.title, category = summary.category, modified = summary.modified,
+                        pinned = summary.pinned, thumbnailUrl = summary.thumbnailUrl
+                    )
+                } else {
+                    store.revisions[id] = summary
+                }
+                store.versions[id] = version
+                return
+            }
+        }
+        if (store.versions[id] == version && store.revisions[id]?.detailsLoaded == true && store.revisions[id]?.remoteState in
             listOf(PrivateRemoteState.AVAILABLE, PrivateRemoteState.LEGACY_UNVERIFIED)) return
         val document = PrivateDocument.parse(JSONObject(String(api.read(id))), id)
         require(document.id == properties.getString("documentId")) { "개인 자료 메타데이터가 일치하지 않습니다." }
-        store.revisions[id] = document.copy(remoteState = PrivateRemoteState.LEGACY_UNVERIFIED); store.versions[id] = version
+        store.revisions[id] = document.copy(remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
+            thumbnailUrl = file.optString("thumbnailLink"), detailsLoaded = true); store.versions[id] = version
+    }
+
+    /** Enriches a summary after it has already been published to the list. */
+    private suspend fun hydrate(file: JSONObject) {
+        val id = file.getString("id")
+        val properties = file.optJSONObject("appProperties") ?: return
+        if (properties.optString("kind") != "metadata" || file.optBoolean("trashed")) return
+        val current = store.revisions[id] ?: return
+        if (current.detailsLoaded) return
+        val document = PrivateDocument.parse(JSONObject(String(api.read(id))), id)
+        require(document.id == properties.getString("documentId")) { "개인 자료 메타데이터가 일치하지 않습니다." }
+        store.revisions[id] = document.copy(remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
+            thumbnailUrl = file.optString("thumbnailLink"), detailsLoaded = true)
     }
     private fun markMissing(id: String, state: PrivateRemoteState) {
         val document = store.revisions[id] ?: store.lineages[id]?.placeholder() ?: return
@@ -154,8 +183,11 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
         var page: String? = null
         do {
             val result = api.list("$appQuery and (appProperties has { key='kind' and value='metadata' } or appProperties has { key='kind' and value='lineage' })", page)
-            for (file in result.files) { accept(file); seen += file.getString("id") }
-            store.save(); progress(); page = result.next
+            for (file in result.files) { accept(file); seen += file.getString("id"); store.save(); progress() }
+            // The first progress callbacks above make appProperties-only rows visible before
+            // any full JSON metadata or later Drive pages are fetched.
+            for (file in result.files) { hydrate(file); store.save(); progress() }
+            page = result.next
         } while (page != null)
         store.revisions.keys.filter { it !in seen }.forEach { markMissing(it, PrivateRemoteState.MISSING) }
         store.lineages.entries.removeAll { it.value.ledgerId !in seen }
@@ -173,7 +205,9 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
                     markMissing(id, PrivateRemoteState.MISSING)
                     store.lineages.entries.removeAll { it.value.ledgerId == id }
                 }
-                else change.optJSONObject("file")?.let { accept(it) }
+                else change.optJSONObject("file")?.let {
+                    accept(it); store.save(); progress(); hydrate(it)
+                }
                 // Originals are fetched on demand; a Drive edit invalidates only that cached original.
                 File(store.directory, "originals/${accountCacheKey(id)}").delete()
             }

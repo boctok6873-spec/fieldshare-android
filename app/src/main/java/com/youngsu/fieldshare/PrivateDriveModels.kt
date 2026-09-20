@@ -62,7 +62,11 @@ internal data class PrivateDocument(
     val lineageId: String = "",
     val remoteState: PrivateRemoteState = PrivateRemoteState.AVAILABLE,
     val syncStatus: PrivateSyncStatus = PrivateSyncStatus.COMPLETE,
-    val pinned: Boolean = false
+    val pinned: Boolean = false,
+    /** Drive's lightweight list thumbnail; never points at an attachment download. */
+    val thumbnailUrl: String = "",
+    /** False for an appProperties-only list item whose JSON is fetched later. */
+    val detailsLoaded: Boolean = true
 ) {
     fun json(): JSONObject = JSONObject().put("schemaVersion", schemaVersion).put("lineageId", lineageId).put("id", id)
         .put("revision", revision).put("parents", JSONArray(parents)).put("title", title)
@@ -70,6 +74,7 @@ internal data class PrivateDocument(
         .put("modified", modified).put("ocr", ocr).put("deleted", deleted).put("pinned", pinned)
         .put("format", if (attachments.isEmpty()) "TEXT" else "ATTACHMENT")
         .put("attachments", JSONArray(attachments.map { it.json() }))
+        .put("thumbnailUrl", thumbnailUrl)
 
     companion object {
         fun parse(json: JSONObject, fileId: String): PrivateDocument {
@@ -80,9 +85,33 @@ internal data class PrivateDocument(
                 json.optString("ocr"), (json.getJSONArray("attachments")).let { a ->
                     (0 until a.length()).map { a.getJSONObject(it).let { PrivateAttachment(it.getString("id"), it.getString("mime")) } }
                 }, json.optBoolean("deleted"), fileId, json.getInt("schemaVersion"), json.optString("lineageId"),
-                pinned = json.optBoolean("pinned"))
+                pinned = json.optBoolean("pinned"), thumbnailUrl = json.optString("thumbnailUrl"), detailsLoaded = true)
         }
     }
+}
+
+/** Builds a safe, content-free list item from Drive appProperties without downloading JSON. */
+internal fun privateSummaryFromProperties(fileId: String, properties: JSONObject, thumbnailUrl: String = ""): PrivateDocument? {
+    if (properties.optString("app") != DriveMarker || properties.optString("kind") != "metadata") return null
+    val id = properties.optString("listDocumentId", properties.optString("documentId"))
+    val revision = properties.optString("listRevision")
+    val title = properties.optString("listTitle")
+    if (id.isBlank() || revision.isBlank() || title.isBlank()) return null
+    return PrivateDocument(
+        id = id,
+        revision = revision,
+        parents = emptyList(),
+        title = title,
+        content = "",
+        category = properties.optString("listCategory", "기타"),
+        created = properties.optLong("listCreated", properties.optLong("listModified")),
+        modified = properties.optLong("listModified"),
+        fileId = fileId,
+        remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
+        pinned = properties.optString("listPinned").toBoolean(),
+        thumbnailUrl = thumbnailUrl.ifBlank { properties.optString("listThumbnail") },
+        detailsLoaded = false
+    )
 }
 
 internal data class PendingPrivateSave(val document: PrivateDocument, val status: PrivateSyncStatus, val error: String?)
@@ -122,7 +151,7 @@ internal fun privateHeads(revisions: Collection<PrivateDocument>): List<PrivateD
 /** A pin is shown only for the current, fully saved document head. */
 internal fun showsPinnedPrivateDocument(document: PrivateDocument): Boolean =
     document.pinned && document.syncStatus == PrivateSyncStatus.COMPLETE &&
-        !document.deleted && document.remoteState == PrivateRemoteState.AVAILABLE
+        !document.deleted && (document.remoteState == PrivateRemoteState.AVAILABLE || !document.detailsLoaded)
 
 internal fun searchPrivateDocuments(documents: List<PrivateDocument>, query: String): List<PrivateDocument> {
     fun normalize(value: String) = value.replace(Regex("\\s+"), " ").trim()

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.DocumentRegistrationDateTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-20T01:38:35.054Z" hostname="BOCTOK-PC" time="0.071">
+<testsuite name="com.youngsu.fieldshare.DocumentRegistrationDateTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:19:16.874Z" hostname="BOCTOK-PC" time="0.043">
   <properties/>
-  <testcase name="allMode_includesOldAndLegacyDocumentsWithoutCreatedAt" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.042"/>
-  <testcase name="registrationDate_usesKoreanReadableFormatAndHandlesMissingTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.013"/>
+  <testcase name="allMode_includesOldAndLegacyDocumentsWithoutCreatedAt" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.024"/>
+  <testcase name="registrationDate_usesKoreanReadableFormatAndHandlesMissingTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.008"/>
   <testcase name="recentActivityWindow_includesExactThirtyDayBoundaryOnly" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.003"/>
   <testcase name="allMode_sortsDocumentWithTimestampBeforeLegacyDocumentWithoutTimestamp" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.001"/>
-  <testcase name="activityDate_formatsTheCreatedTimeInKoreaAsMonthAndDay" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.009"/>
+  <testcase name="activityDate_formatsTheCreatedTimeInKoreaAsMonthAndDay" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.006"/>
   <testcase name="recentActivitiesForDisplay_includesActivityCreatedAfterListenerStarted" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.0"/>
   <testcase name="activityDate_keepsTheSafeFallbackWhenServerTimeIsUnavailable" classname="com.youngsu.fieldshare.DocumentRegistrationDateTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>

@@ -29,6 +29,41 @@ class PrivateDriveTest {
         assertEquals(listOf("list", "journal"), events)
     }
 
+    @Test fun appPropertiesCreateLightweightListSummaryWithoutDetailPayload() {
+        val summary = privateSummaryFromProperties(
+            "drive-file",
+            JSONObject().put("app", DriveMarker).put("kind", "metadata")
+                .put("documentId", "doc-1").put("listDocumentId", "doc-1")
+                .put("listRevision", "rev-3").put("listTitle", "냉장고 점검")
+                .put("listCategory", "냉장고").put("listCreated", "10")
+                .put("listModified", "30").put("listPinned", "true"),
+            "https://thumbnail.example/small"
+        )
+        assertNotNull(summary)
+        assertEquals("냉장고 점검", summary!!.title)
+        assertEquals("냉장고", summary.category)
+        assertTrue(summary.pinned)
+        assertEquals("https://thumbnail.example/small", summary.thumbnailUrl)
+        assertFalse(summary.detailsLoaded)
+        assertTrue(summary.content.isEmpty())
+    }
+
+    @Test fun fullSyncPublishesFirstSummaryBeforeLaterDrivePages() = runBlocking {
+        val cache = MemoryCache()
+        val first = doc(id = "first", revision = "r1").copy(fileId = "first")
+        val second = doc(id = "second", revision = "r2").copy(fileId = "second")
+        val api = FakeApi().apply {
+            pages[null] = DrivePage(listOf(summaryFile(first)), "next")
+            pages["next"] = DrivePage(listOf(summaryFile(second)), null)
+            bodies["first"] = first.json().toString().toByteArray()
+            bodies["second"] = second.json().toString().toByteArray()
+        }
+        val publishedSizes = mutableListOf<Int>()
+        PrivateDriveSync(api, cache).sync { publishedSizes += cache.revisions.size }
+        assertTrue("first page must be visible before the second page completes", publishedSizes.contains(1))
+        assertEquals(2, cache.revisions.size)
+    }
+
     @Test fun privateDeleteSyncButtonDisablesUntilCleanupAndRestoresAfterward() {
         val deleting = DriveUiState(deleting = true, pendingSave = true, pendingSyncStatus = PrivateSyncStatus.WAITING)
         assertEquals("자료 삭제중", privateSyncButtonLabel(deleting)); assertFalse(privateSyncButtonEnabled(deleting))
@@ -438,6 +473,14 @@ class PrivateDriveTest {
 
     private fun file(id: String, docId: String) = JSONObject().put("id", id).put("version", "1")
         .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", "metadata").put("documentId", docId))
+
+    private fun summaryFile(document: PrivateDocument) = JSONObject().put("id", document.fileId)
+        .put("version", "1").put("thumbnailLink", "https://thumbnail.example/${document.fileId}")
+        .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", "metadata")
+            .put("documentId", document.id).put("listDocumentId", document.id)
+            .put("listRevision", document.revision).put("listTitle", document.title)
+            .put("listCategory", document.category).put("listCreated", document.created.toString())
+            .put("listModified", document.modified.toString()).put("listPinned", document.pinned.toString()))
 
     @Test fun externalRemovalMustNotPromoteAncestor() = runBlocking {
         val cache = MemoryCache().apply {
