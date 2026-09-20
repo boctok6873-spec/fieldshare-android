@@ -37,7 +37,7 @@ private fun cleanupLastFile(directory: File) = File(directory, CLEANUP_LAST)
 private fun pendingDriveIds(directory: File): Set<String> {
     val ids = linkedSetOf<String>()
     fun collect(plan: JSONObject) {
-        listOf("metadataId", "thumbnailId", "baseFileId").forEach { plan.optString(it).takeIf(String::isNotBlank)?.let(ids::add) }
+        listOf("metadataId", "thumbnailId", "baseFileId", "sourceId").forEach { plan.optString(it).takeIf(String::isNotBlank)?.let(ids::add) }
         plan.optString("operation").takeIf(String::isNotBlank)?.let { }
         plan.optJSONArray("cleanup")?.strings()?.forEach(ids::add)
         plan.optJSONArray("attachments")?.let { entries -> repeat(entries.length()) { index ->
@@ -46,9 +46,11 @@ private fun pendingDriveIds(directory: File): Set<String> {
         } }
         plan.optJSONObject("document")?.let { document ->
             document.optString("fileId").takeIf(String::isNotBlank)?.let(ids::add)
+            document.optString("lineageId").takeIf(String::isNotBlank)?.let(ids::add)
             document.optString("thumbnailId").takeIf(String::isNotBlank)?.let(ids::add)
             document.optJSONArray("attachments")?.let { entries -> repeat(entries.length()) { index ->
-                entries.getJSONObject(index).optString("id").takeIf(String::isNotBlank)?.let(ids::add)
+                val entry = entries.getJSONObject(index)
+                listOf("id", "sourceId").forEach { entry.optString(it).takeIf(String::isNotBlank)?.let(ids::add) }
             } }
         }
     }
@@ -120,12 +122,33 @@ private fun cleanupCacheFiles(directory: File, preservedIds: Set<String>): Int {
 
 private fun logCleanup(message: String) { runCatching { Log.i("FieldShareDriveCleanup", message) } }
 
+private suspend fun orphanInventory(api: PrivateDriveApi, preserved: Set<String>): Set<String> = runCatching {
+    val orphanIds = linkedSetOf<String>()
+    var page: String? = null
+    do {
+        val result = api.list("trashed=false and $DriveMarkerQuery and (appProperties has { key='kind' and value='attachment' } or appProperties has { key='kind' and value='thumbnail' })", page)
+        result.files.forEach { file ->
+            val kind = file.optJSONObject("appProperties")?.optString("kind")
+            if (kind == "attachment" || kind == "thumbnail") {
+                file.optString("id").takeIf(String::isNotBlank)?.let { if (it !in preserved) orphanIds += it }
+            }
+        }
+        page = result.next
+    } while (page != null)
+    orphanIds
+}.getOrDefault(emptySet())
+
+private const val DriveMarkerQuery = "appProperties has { key='app' and value='$DriveMarker' }"
+
 /** Trashes obsolete Drive evidence; Drive permanent deletion is deliberately never used. */
 internal suspend fun cleanupObsoletePrivateDrive(
     api: PrivateDriveApi,
     store: PrivateMetadataCache,
     now: Long = System.currentTimeMillis()
 ): PrivateCleanupResult {
+    if (!store.initialSyncComplete) {
+        return PrivateCleanupResult(0, 0, 0, 0, 0)
+    }
     val plan = planPrivateDriveCleanup(store, now)
     val journalFile = cleanupJournalFile(store.directory)
     val last = cleanupLastFile(store.directory).takeIf(File::exists)?.readText()?.toLongOrNull() ?: 0L
@@ -133,8 +156,15 @@ internal suspend fun cleanupObsoletePrivateDrive(
     if (journal == null && now - last < CLEANUP_INTERVAL_MS) {
         return PrivateCleanupResult(0, 0, 0, plan.preservedTombstones, 0)
     }
-    journal = journal ?: CleanupJournal(LinkedHashSet(plan.candidates), now)
-    journal.remaining.retainAll(plan.candidates + pendingDriveIds(store.directory) + store.cleanup)
+    val currentPending = pendingDriveIds(store.directory)
+    val currentPreserved = plan.preservedIds + currentPending + store.cleanup
+    val inventoryCandidates = orphanInventory(api, currentPreserved)
+    val currentCandidates = plan.candidates + inventoryCandidates
+    journal = journal ?: CleanupJournal(LinkedHashSet(currentCandidates), now)
+    // A resumed journal is intersected with the current candidate set first, then every
+    // currently protected ID is removed explicitly. A newly pending ID can never be trashed.
+    journal.remaining.retainAll(currentCandidates)
+    journal.remaining.removeAll(currentPreserved)
     writeCleanupJournal(store.directory, journal)
     val initial = journal.remaining.size
     var trashed = 0
@@ -157,11 +187,16 @@ internal suspend fun cleanupObsoletePrivateDrive(
         logCleanup("candidates=$initial trashed=$trashed failed=$failed preservedTombstones=${plan.preservedTombstones} localCacheRemoved=0")
         return PrivateCleanupResult(initial, trashed, failed, plan.preservedTombstones, 0)
     }
+    val protectedForLocalCleanup = plan.preservedIds + currentPending + store.cleanup
     val obsoleteMetadata = store.revisions.values.filter { it !in privateHeads(store.revisions.values) || it.deleted }
-        .filter { it.fileId !in plan.preservedIds && it.fileId.isNotBlank() }
+        .filter {
+            it.fileId !in protectedForLocalCleanup &&
+                it.lineageId !in protectedForLocalCleanup &&
+                it.fileId.isNotBlank()
+        }
         .map { it.fileId }.toSet()
     obsoleteMetadata.forEach { store.revisions.remove(it); store.versions.remove(it); store.lineages.remove(it) }
-    val removedCache = cleanupCacheFiles(store.directory, plan.preservedIds + pendingDriveIds(store.directory) + store.cleanup)
+    val removedCache = cleanupCacheFiles(store.directory, protectedForLocalCleanup)
     store.save()
     cleanupJournalFile(store.directory).delete()
     cleanupLastFile(store.directory).writeText(now.toString())

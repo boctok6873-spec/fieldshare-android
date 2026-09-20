@@ -85,7 +85,7 @@ class PrivateDriveTest {
     }
 
     @Test fun cleanupPreservesHeadAndRecentTombstoneButPlansOldEvidence() {
-        val cache = MemoryCache()
+        val cache = MemoryCache().apply { initialSyncComplete = true }
         val now = System.currentTimeMillis()
         val head = doc(id = "doc", revision = "head", parents = listOf("old")).copy(
             fileId = "meta-head", lineageId = "ledger-head", schemaVersion = 2,
@@ -109,7 +109,7 @@ class PrivateDriveTest {
     }
 
     @Test fun cleanupFailureKeepsJournalAndRetryTrashesOnlyRemainingIds() = runBlocking {
-        val cache = MemoryCache(); val old = doc(id = "doc", revision = "old").copy(fileId = "meta-old", lineageId = "ledger-old")
+        val cache = MemoryCache().apply { initialSyncComplete = true }; val old = doc(id = "doc", revision = "old").copy(fileId = "meta-old", lineageId = "ledger-old")
         val head = doc(id = "doc", revision = "head", parents = listOf("old")).copy(fileId = "meta-head", lineageId = "ledger-head")
         cache.revisions[old.fileId] = old; cache.revisions[head.fileId] = head
         cache.lineages[old.fileId] = PrivateLineage.of(old); cache.lineages[head.fileId] = PrivateLineage.of(head)
@@ -123,7 +123,7 @@ class PrivateDriveTest {
     }
 
     @Test fun cleanupKeepsPendingIdsAndOnlyRemovesUnreferencedLocalCaches() = runBlocking {
-        val cache = MemoryCache(); val head = doc(id = "doc", revision = "head").copy(
+        val cache = MemoryCache().apply { initialSyncComplete = true }; val head = doc(id = "doc", revision = "head").copy(
             fileId = "meta-head", thumbnailId = "thumb-head", attachments = listOf(PrivateAttachment("att-head", "image/jpeg")))
         cache.revisions[head.fileId] = head
         val originals = File(cache.directory, "originals").apply { mkdirs() }
@@ -139,6 +139,41 @@ class PrivateDriveTest {
         assertFalse(staleOriginal.exists()); assertFalse(staleThumbnail.exists())
         val plan = planPrivateDriveCleanup(cache)
         assertTrue("pending IDs are retained by planning", plan.preservedIds.containsAll(listOf("pending-meta", "pending-att")))
+    }
+
+    @Test fun cleanupProtectsPendingLineageAndSkipsBeforeInitialSync() = runBlocking {
+        val notReady = MemoryCache()
+        val noOpApi = FakeApi()
+        cleanupObsoletePrivateDrive(noOpApi, notReady)
+        assertTrue(noOpApi.listQueries.isEmpty()); assertTrue(noOpApi.trashed.isEmpty())
+
+        val cache = MemoryCache().apply { initialSyncComplete = true }
+        val old = doc(id = "doc", revision = "old").copy(fileId = "meta-old", lineageId = "ledger-old")
+        val head = doc(id = "doc", revision = "head", parents = listOf("old")).copy(fileId = "meta-head")
+        cache.revisions[old.fileId] = old; cache.revisions[head.fileId] = head
+        privateQueueDirectory(cache.directory).resolve("pending.json").writeText(JSONObject()
+            .put("metadataId", "pending-meta").put("document", old.json()).toString())
+        val plan = planPrivateDriveCleanup(cache)
+        assertTrue(plan.preservedIds.contains("ledger-old"))
+        val api = FakeApi()
+        cleanupObsoletePrivateDrive(api, cache)
+        assertTrue("pending metadata must remain in local revisions", cache.revisions.containsKey(old.fileId))
+        assertFalse("pending lineage must never be trashed", api.trashed.contains("ledger-old"))
+    }
+
+    @Test fun cleanupTrashesOrphanAttachmentAndThumbnailInventory() = runBlocking {
+        val cache = MemoryCache().apply { initialSyncComplete = true }
+        val head = doc(id = "doc", revision = "head").copy(fileId = "meta-head", attachments = emptyList(), thumbnailId = "")
+        cache.revisions[head.fileId] = head
+        val api = FakeApi().apply {
+            pages[null] = DrivePage(listOf(
+                JSONObject().put("id", "orphan-att").put("appProperties", JSONObject().put("app", DriveMarker).put("kind", "attachment")),
+                JSONObject().put("id", "orphan-thumb").put("appProperties", JSONObject().put("app", DriveMarker).put("kind", "thumbnail"))
+            ), null)
+        }
+        cleanupObsoletePrivateDrive(api, cache)
+        assertTrue(api.trashed.containsAll(listOf("orphan-att", "orphan-thumb")))
+        assertTrue(api.listQueries.single().contains("trashed=false"))
     }
 
     @Test fun fullSyncPublishesFirstSummaryBeforeLaterDrivePages() = runBlocking {
