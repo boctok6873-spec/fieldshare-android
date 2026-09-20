@@ -104,11 +104,12 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
         }
         progress()
     }
-    private suspend fun accept(file: JSONObject) {
+    private suspend fun accept(file: JSONObject, summaryOnly: Boolean = false) {
         val id = file.getString("id")
         val properties = file.optJSONObject("appProperties") ?: return
         if (properties.optString("app") != DriveMarker) return
         if (properties.optString("kind") == "lineage") {
+            if (summaryOnly) return
             // Include trashed ledgers as evidence while Drive still makes them readable.
             val lineage = PrivateLineage.parse(JSONObject(String(api.read(id))))
             require(lineage.ledgerId == id && lineage.documentId == properties.getString("documentId"))
@@ -118,6 +119,10 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
         }
         if (properties.optString("kind") != "metadata") return
         if (file.optBoolean("trashed")) {
+            if (summaryOnly) {
+                privateSummaryFromProperties(id, properties)?.let { store.revisions[id] = it.copy(remoteState = PrivateRemoteState.TRASHED) }
+                return
+            }
             if (!store.revisions.containsKey(id)) {
                 try { store.revisions[id] = PrivateDocument.parse(JSONObject(String(api.read(id))), id) }
                 catch (e: DriveFailure) { if (e.status != 404) throw e }
@@ -125,13 +130,13 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
             markMissing(id, PrivateRemoteState.TRASHED); return
         }
         val version = file.optString("version")
-        privateSummaryFromProperties(id, properties, file.optString("thumbnailLink")).let { summary ->
+        privateSummaryFromProperties(id, properties).let { summary ->
             if (summary != null) {
                 val current = store.revisions[id]
                 if (current != null && store.versions[id] == version && current.detailsLoaded) {
                     store.revisions[id] = current.copy(
                         title = summary.title, category = summary.category, modified = summary.modified,
-                        pinned = summary.pinned, thumbnailUrl = summary.thumbnailUrl
+                        pinned = summary.pinned, thumbnailId = summary.thumbnailId, parents = summary.parents
                     )
                 } else {
                     store.revisions[id] = summary
@@ -144,8 +149,7 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
             listOf(PrivateRemoteState.AVAILABLE, PrivateRemoteState.LEGACY_UNVERIFIED)) return
         val document = PrivateDocument.parse(JSONObject(String(api.read(id))), id)
         require(document.id == properties.getString("documentId")) { "개인 자료 메타데이터가 일치하지 않습니다." }
-        store.revisions[id] = document.copy(remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
-            thumbnailUrl = file.optString("thumbnailLink"), detailsLoaded = true); store.versions[id] = version
+        store.revisions[id] = document.copy(remoteState = PrivateRemoteState.LEGACY_UNVERIFIED, detailsLoaded = true); store.versions[id] = version
     }
 
     /** Enriches a summary after it has already been published to the list. */
@@ -158,7 +162,7 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
         val document = PrivateDocument.parse(JSONObject(String(api.read(id))), id)
         require(document.id == properties.getString("documentId")) { "개인 자료 메타데이터가 일치하지 않습니다." }
         store.revisions[id] = document.copy(remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
-            thumbnailUrl = file.optString("thumbnailLink"), detailsLoaded = true)
+            thumbnailId = properties.optString("listThumbnailId"), detailsLoaded = true)
     }
     private fun markMissing(id: String, state: PrivateRemoteState) {
         val document = store.revisions[id] ?: store.lineages[id]?.placeholder() ?: return
@@ -180,15 +184,24 @@ internal class PrivateDriveSync(private val api: PrivateDriveApi, private val st
         // Capture before listing so changes made during pagination are replayed, never skipped.
         val start = api.startToken()
         val seen = mutableSetOf<String>()
+        val metadataFiles = mutableListOf<JSONObject>()
+        val lineageFiles = mutableListOf<JSONObject>()
         var page: String? = null
         do {
             val result = api.list("$appQuery and (appProperties has { key='kind' and value='metadata' } or appProperties has { key='kind' and value='lineage' })", page)
-            for (file in result.files) { accept(file); seen += file.getString("id"); store.save(); progress() }
-            // The first progress callbacks above make appProperties-only rows visible before
-            // any full JSON metadata or later Drive pages are fetched.
-            for (file in result.files) { hydrate(file); store.save(); progress() }
+            for (file in result.files) {
+                seen += file.getString("id")
+                when (file.optJSONObject("appProperties")?.optString("kind")) {
+                    "metadata" -> { metadataFiles += file; accept(file, summaryOnly = true) }
+                    "lineage" -> lineageFiles += file
+                }
+                store.save(); progress()
+            }
             page = result.next
         } while (page != null)
+        // Only after every page has produced its lightweight rows do we read JSON and lineage.
+        metadataFiles.forEach { file -> accept(file); hydrate(file); store.save(); progress() }
+        lineageFiles.forEach { file -> accept(file); store.save(); progress() }
         store.revisions.keys.filter { it !in seen }.forEach { markMissing(it, PrivateRemoteState.MISSING) }
         store.lineages.entries.removeAll { it.value.ledgerId !in seen }
         reconcileEvidence()

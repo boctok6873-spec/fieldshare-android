@@ -23,7 +23,7 @@
 <tr>
 <td>
 <div class="infoBox" id="tests">
-<div class="counter">41</div>
+<div class="counter">44</div>
 <p>tests</p>
 </div>
 </td>
@@ -41,7 +41,7 @@
 </td>
 <td>
 <div class="infoBox" id="duration">
-<div class="counter">0.293s</div>
+<div class="counter">0.743s</div>
 <p>duration</p>
 </div>
 </td>
@@ -76,7 +76,7 @@
 </thead>
 <tr>
 <td class="success">accountQueueLockSerializesCancellationStateWrites</td>
-<td class="success">0.010s</td>
+<td class="success">0.015s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -86,47 +86,52 @@
 </tr>
 <tr>
 <td class="success">appPropertiesCreateLightweightListSummaryWithoutDetailPayload</td>
-<td class="success">0.003s</td>
+<td class="success">0.005s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">authorizationRequiredDeleteJournalResumesCleanupWithoutUploadPlan</td>
-<td class="success">0s</td>
-<td class="success">passed</td>
-</tr>
-<tr>
-<td class="success">cancellationDuringUploadStopsBeforeReceiptAndKeepsRecoveryJournal</td>
-<td class="success">0.012s</td>
-<td class="success">passed</td>
-</tr>
-<tr>
-<td class="success">cancelledCleanupAuthFailureKeepsCancellationIntentUntilReauthorized</td>
-<td class="success">0.015s</td>
-<td class="success">passed</td>
-</tr>
-<tr>
-<td class="success">cancelledCleanupNetworkFailureIsRetryableAndLaterCompletesWithoutReupload</td>
-<td class="success">0.106s</td>
-<td class="success">passed</td>
-</tr>
-<tr>
-<td class="success">cancelledMetadataIsFinalizedOnlyAfterConfirmedRemoteRead</td>
-<td class="success">0.015s</td>
-<td class="success">passed</td>
-</tr>
-<tr>
-<td class="success">cancelledQueueJournalCannotBeOverwrittenByUploaderSnapshot</td>
-<td class="success">0.007s</td>
-<td class="success">passed</td>
-</tr>
-<tr>
-<td class="success">categoryOrderAndLocalSubstringSearch</td>
 <td class="success">0.001s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
+<td class="success">backgroundSyncGateAllowsOnlyOneActiveScan</td>
+<td class="success">0.001s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">cancellationDuringUploadStopsBeforeReceiptAndKeepsRecoveryJournal</td>
+<td class="success">0.025s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">cancelledCleanupAuthFailureKeepsCancellationIntentUntilReauthorized</td>
+<td class="success">0.025s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">cancelledCleanupNetworkFailureIsRetryableAndLaterCompletesWithoutReupload</td>
+<td class="success">0.419s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">cancelledMetadataIsFinalizedOnlyAfterConfirmedRemoteRead</td>
+<td class="success">0.025s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">cancelledQueueJournalCannotBeOverwrittenByUploaderSnapshot</td>
+<td class="success">0.012s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">categoryOrderAndLocalSubstringSearch</td>
+<td class="success">0.002s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
 <td class="success">completedLegacyJournalNeverDeletesAccountOrOtherQueueJobs</td>
-<td class="success">0.011s</td>
+<td class="success">0.013s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -136,12 +141,12 @@
 </tr>
 <tr>
 <td class="success">deleteJournalIsNotMistakenForARecoverableSave</td>
-<td class="success">0.002s</td>
+<td class="success">0.004s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">deleteRacingWithEditRemainsAnExplicitConflict</td>
-<td class="success">0.002s</td>
+<td class="success">0.003s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -151,7 +156,7 @@
 </tr>
 <tr>
 <td class="success">deletionPartialFailureRetainsOnlyUnfinishedExactTargets</td>
-<td class="success">0.002s</td>
+<td class="success">0.003s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -161,52 +166,57 @@
 </tr>
 <tr>
 <td class="success">detailTracksNewestLogicalRevisionAfterPinToggleAndEdit</td>
-<td class="success">0.001s</td>
+<td class="success">0.003s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">displayedIdentityMustMatchAuthorizedAccountAndGrantedDriveScope</td>
-<td class="success">0.001s</td>
+<td class="success">0s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">drivePropertiesAreUtf8BoundedWithoutSplittingKoreanCharacters</td>
+<td class="success">0s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">durablePendingSaveIsVisibleWithKoreanRetryStateAfterRestart</td>
-<td class="success">0.004s</td>
+<td class="success">0.006s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">expiredChangeTokenTriggersFullResync</td>
-<td class="success">0.005s</td>
+<td class="success">0.010s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">externalRemovalMustNotPromoteAncestor</td>
-<td class="success">0.004s</td>
+<td class="success">0.006s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">failedAttachmentNeverPublishesMetadataAndRetryReusesIds</td>
-<td class="success">0.020s</td>
+<td class="success">0.045s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">firstSyncPaginatesMetadataAndReplaysConcurrentChangesWithoutDownloadingOriginals</td>
-<td class="success">0.003s</td>
+<td class="success">0.004s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">fullSyncPublishesFirstSummaryBeforeLaterDrivePages</td>
-<td class="success">0.003s</td>
+<td class="success">0.005s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">homeMigrationRunsOnceForEveryPreviousValueAndRetainsLaterChoice</td>
-<td class="success">0.002s</td>
+<td class="success">0.003s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">partialSyncDoesNotClaimCompletionAndCanRetry</td>
-<td class="success">0.004s</td>
+<td class="success">0.009s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -231,7 +241,7 @@
 </tr>
 <tr>
 <td class="success">privateDeleteJournalSurvivesMetadataCommitUntilDriveCleanupCompletes</td>
-<td class="success">0.018s</td>
+<td class="success">0.025s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -241,7 +251,7 @@
 </tr>
 <tr>
 <td class="success">privateDeleteSyncButtonDisablesUntilCleanupAndRestoresAfterward</td>
-<td class="success">0.005s</td>
+<td class="success">0.021s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -251,7 +261,7 @@
 </tr>
 <tr>
 <td class="success">queueKeepsMultipleOfflineSavesAndTheirLocalAttachmentsSeparate</td>
-<td class="success">0.006s</td>
+<td class="success">0.009s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
@@ -261,22 +271,27 @@
 </tr>
 <tr>
 <td class="success">reconnectFindsMarkedFolderAcrossPagesWithoutLocalIdOrName</td>
-<td class="success">0.002s</td>
+<td class="success">0.004s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">revisionAttachmentsAreCopiedOnDriveWithoutOriginalDownloads</td>
-<td class="success">0.021s</td>
+<td class="success">0.027s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">schemaRoundTripContainsNoFirebaseOrAccountFields</td>
-<td class="success">0.002s</td>
+<td class="success">0.004s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">stableAccountKeyDoesNotUseDisplayNameAndIsolatesAccounts</td>
-<td class="success">0.003s</td>
+<td class="success">0.005s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">summaryAndHydratedRevisionKeepSameHeadPinAndListKey</td>
+<td class="success">0.001s</td>
 <td class="success">passed</td>
 </tr>
 </table>
@@ -289,7 +304,7 @@
 <input id="line-wrapping-toggle" type="checkbox" autocomplete="off"/>
 </label>
 </div>Generated by 
-<a href="https://www.gradle.org">Gradle 8.13</a> at 2026. 9. 20. 오전 11:19:18</p>
+<a href="https://www.gradle.org">Gradle 8.13</a> at 2026. 9. 20. 오전 11:38:23</p>
 </div>
 </div>
 </body>

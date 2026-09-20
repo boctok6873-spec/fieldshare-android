@@ -9,6 +9,9 @@ import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.ByteArrayOutputStream
 
 private val accountQueueMonitors = ConcurrentHashMap<String, Any>()
 
@@ -76,15 +79,32 @@ internal fun cleanupCompletedQueueAttachments(planFile: File, plan: JSONObject) 
 internal fun privateFileMetadata(folder: String, documentId: String, kind: String, name: String,
     document: PrivateDocument? = null) = JSONObject()
     .put("name", name).put("parents", JSONArray(listOf(folder)))
-    .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", kind).put("documentId", documentId).apply {
+    .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", kind)
+        .put("documentId", truncateDriveProperty(documentId)).apply {
         if (document != null && kind == "metadata") {
-            put("listDocumentId", document.id).put("listRevision", document.revision)
-                .put("listTitle", document.title.take(500)).put("listCategory", document.category.take(200))
+            put("listDocumentId", truncateDriveProperty(document.id)).put("listRevision", truncateDriveProperty(document.revision))
+                .put("listTitle", truncateDriveProperty(document.title)).put("listCategory", truncateDriveProperty(document.category))
                 .put("listCreated", document.created.toString()).put("listModified", document.modified.toString())
                 .put("listPinned", document.pinned.toString())
-            if (document.thumbnailUrl.isNotBlank()) put("listThumbnail", document.thumbnailUrl)
+                .put("listParents", summarizeDriveParents(document.parents))
+            if (document.thumbnailId.isNotBlank()) put("listThumbnailId", truncateDriveProperty(document.thumbnailId))
         }
     })
+
+private fun createListThumbnail(file: File): ByteArray? {
+    val source = try { BitmapFactory.decodeFile(file.path) } catch (_: RuntimeException) { null } ?: return null
+    val scale = minOf(320f / source.width, 320f / source.height, 1f)
+    val bitmap = if (scale < 1f) Bitmap.createScaledBitmap(source,
+        (source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1), true) else source
+    return try {
+        ByteArrayOutputStream().use { output ->
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 76, output)) null else output.toByteArray()
+        }
+    } finally {
+        if (bitmap !== source) bitmap.recycle()
+        source.recycle()
+    }
+}
 
 /** Upload the persisted transaction; never publish metadata before every attachment has succeeded. */
 internal class PrivateDriveUploads(private val api: PrivateDriveApi, private val local: PrivateMetadataCache) {
@@ -95,6 +115,26 @@ internal class PrivateDriveUploads(private val api: PrivateDriveApi, private val
         if (document.lineageId.isBlank()) {
             ensureQueueActive(file)
             document = document.copy(schemaVersion = 2, lineageId = api.generateId())
+            plan.put("document", document.json())
+            writeActiveQueuePlan(file, plan)
+        }
+        var thumbnailId = document.thumbnailId.ifBlank { plan.optString("thumbnailId") }
+        if (thumbnailId.isBlank()) {
+            val source = (0 until plan.getJSONArray("attachments").length()).asSequence()
+                .map { plan.getJSONArray("attachments").getJSONObject(it) }
+                .firstOrNull { it.optString("mime").startsWith("image/") && it.optString("local").isNotBlank() }
+            val bytes = source?.let { createListThumbnail(File(file.parentFile, it.getString("local"))) }
+            if (bytes != null) {
+                ensureQueueActive(file)
+                thumbnailId = api.generateId()
+                plan.put("thumbnailId", thumbnailId)
+                document = document.copy(thumbnailId = thumbnailId)
+                plan.put("document", document.json())
+                writeActiveQueuePlan(file, plan)
+                api.create(thumbnailId, privateFileMetadata(folder, document.id, "thumbnail", "${document.id}-${document.revision}.thumb.jpg"), bytes, "image/jpeg")
+            }
+        } else if (document.thumbnailId != thumbnailId) {
+            document = document.copy(thumbnailId = thumbnailId)
             plan.put("document", document.json())
             writeActiveQueuePlan(file, plan)
         }

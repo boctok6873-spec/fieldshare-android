@@ -203,9 +203,7 @@ internal fun PrivateLibrary(repository: DriveConnectionRepository, query: String
                     else -> "등록된 개인 자료가 없습니다."
                 })
             }
-            items(visible, key = { document ->
-                document.fileId.ifBlank { "${document.id}:${document.revision}" }
-            }) { document ->
+            items(visible, key = ::privateDocumentListKey) { document ->
                 PrivateDocumentCard(repository = repository, document = document, onClick = { onDocumentClick(document) })
             }
         }
@@ -445,7 +443,7 @@ private fun PrivateDocumentCard(repository: DriveConnectionRepository, document:
                 modifier = Modifier.padding(10.dp).padding(end = if (showPinnedIndicator) 24.dp else 0.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                PrivateThumbnail(document)
+                PrivateThumbnail(repository, document)
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(document.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
@@ -513,15 +511,18 @@ internal fun resolvePrivateDetailDocument(selected: PrivateDocument, heads: Coll
 }
 
 @Composable
-private fun PrivateThumbnail(document: PrivateDocument) {
+private fun PrivateThumbnail(repository: DriveConnectionRepository, document: PrivateDocument) {
+    val file by produceState<java.io.File?>(initialValue = null, key1 = document.thumbnailId) {
+        value = if (document.thumbnailId.isBlank()) null else repository.thumbnail(document).getOrNull()
+    }
     Surface(
         modifier = Modifier.size(width = 96.dp, height = 104.dp),
         shape = MaterialTheme.shapes.small,
         color = SamsungBlueLight
     ) {
-        if (document.thumbnailUrl.isNotBlank()) {
+        if (file != null) {
             SubcomposeAsyncImage(
-                model = document.thumbnailUrl,
+                model = file,
                 contentDescription = "${document.title} 썸네일",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

@@ -56,6 +56,13 @@ internal data class DriveUiState(
     val pendingCleanup: Int = 0
 )
 
+/** Small, testable gate used so repeated lifecycle/recomposition callbacks cannot start two scans. */
+internal class BackgroundSyncGate {
+    private var active = false
+    @Synchronized fun tryAcquire(): Boolean = if (active) false else { active = true; true }
+    @Synchronized fun release() { active = false }
+}
+
 /** This component intentionally has no Firebase, profile, push, presence, or analytics dependencies. */
 internal class DriveConnectionRepository(private val context: Context, apiOverride: PrivateDriveApi? = null) {
     private val root = File(context.noBackupFilesDir, "private-drive").apply { mkdirs() }
@@ -72,6 +79,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     val state = mutable.asStateFlow()
     private val api = apiOverride ?: DriveApi { freshToken() }
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val backgroundSyncGate = BackgroundSyncGate()
     @Volatile private var backgroundSyncJob: Job? = null
 
     init {
@@ -151,11 +159,12 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     /** Starts at most one full/incremental scan. It survives recomposition and is safe to call on re-entry. */
     fun startBackgroundSync() {
         if (state.value.accountKey == null) return
+        if (!backgroundSyncGate.tryAcquire()) return
         synchronized(this) {
-            if (backgroundSyncJob?.isActive == true) return
+            if (backgroundSyncJob?.isActive == true) { backgroundSyncGate.release(); return }
             mutable.value = state.value.copy(syncing = true, syncError = null)
             backgroundSyncJob = backgroundScope.launch {
-                mutex.withLock {
+                try { mutex.withLock {
                     try {
                         val local = store ?: throw DriveFailure(401)
                         PrivateDriveSync(api, local).apply { sync { publish() }; retryCleanup() }
@@ -178,7 +187,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
                     } finally {
                         mutable.value = state.value.copy(syncing = false)
                     }
-                }
+                } } finally { backgroundSyncGate.release() }
             }
         }
     }
@@ -472,6 +481,23 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             require(attachment.mime.startsWith("image/"))
             val local = store ?: throw DriveFailure(401)
             withContext(Dispatchers.IO) { cachedOriginal(local, attachment) }
+        }
+    }
+
+    /** Fetches only the app-owned small JPEG. It is authenticated through DriveApi's Bearer token. */
+    suspend fun thumbnail(document: PrivateDocument): Result<File> = mutex.withLock {
+        runCatching {
+            require(document.thumbnailId.isNotBlank())
+            val local = store ?: throw DriveFailure(401)
+            val file = File(local.directory, "thumbnails/${accountCacheKey(document.thumbnailId)}.jpg")
+            if (!file.exists()) {
+                val bytes = api.read(document.thumbnailId)
+                file.parentFile!!.mkdirs()
+                val atomic = AtomicFile(file); val output = atomic.startWrite()
+                try { output.write(bytes); atomic.finishWrite(output) } catch (e: Exception) { atomic.failWrite(output); throw e }
+            }
+            file.setLastModified(System.currentTimeMillis())
+            file
         }
     }
 

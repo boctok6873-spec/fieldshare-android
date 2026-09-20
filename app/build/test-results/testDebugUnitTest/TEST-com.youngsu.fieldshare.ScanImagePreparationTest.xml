@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.ScanImagePreparationTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:19:17.342Z" hostname="BOCTOK-PC" time="0.011">
+<testsuite name="com.youngsu.fieldshare.ScanImagePreparationTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-20T02:38:22.366Z" hostname="BOCTOK-PC" time="0.014">
   <properties/>
-  <testcase name="optimizedImageUploadValidation_acceptsOnlyOptimizerOutputAndSupportedMimeTypes" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.001"/>
-  <testcase name="readExifOrientationOrNormal_usesNormalOrientationWhenExifReadingFails" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.002"/>
+  <testcase name="optimizedImageUploadValidation_acceptsOnlyOptimizerOutputAndSupportedMimeTypes" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.0"/>
+  <testcase name="readExifOrientationOrNormal_usesNormalOrientationWhenExifReadingFails" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.003"/>
   <testcase name="constrainedImageDimensions_keepsGalleryAndScanImagesWithinTwoThousandPixels" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.002"/>
-  <testcase name="scanPreparationFailureMessage_identifiesEveryFailedPageWithoutLeakingPaths" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.002"/>
+  <testcase name="scanPreparationFailureMessage_identifiesEveryFailedPageWithoutLeakingPaths" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.003"/>
   <testcase name="optimizedUrisOrNull_neverReturnsOriginalUriWhenAnyOptimizationFails" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.0"/>
-  <testcase name="validateImageSourceFile_rejectsMissingAndEmptyCacheFiles" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.004"/>
+  <testcase name="validateImageSourceFile_rejectsMissingAndEmptyCacheFiles" classname="com.youngsu.fieldshare.ScanImagePreparationTest" time="0.005"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

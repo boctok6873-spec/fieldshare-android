@@ -63,8 +63,10 @@ internal data class PrivateDocument(
     val remoteState: PrivateRemoteState = PrivateRemoteState.AVAILABLE,
     val syncStatus: PrivateSyncStatus = PrivateSyncStatus.COMPLETE,
     val pinned: Boolean = false,
-    /** Drive's lightweight list thumbnail; never points at an attachment download. */
+    /** Legacy/transient URL field; never serialized or passed to Coil. */
     val thumbnailUrl: String = "",
+    /** ID of the app-owned, small JPEG used by list cards. */
+    val thumbnailId: String = "",
     /** False for an appProperties-only list item whose JSON is fetched later. */
     val detailsLoaded: Boolean = true
 ) {
@@ -74,7 +76,7 @@ internal data class PrivateDocument(
         .put("modified", modified).put("ocr", ocr).put("deleted", deleted).put("pinned", pinned)
         .put("format", if (attachments.isEmpty()) "TEXT" else "ATTACHMENT")
         .put("attachments", JSONArray(attachments.map { it.json() }))
-        .put("thumbnailUrl", thumbnailUrl)
+        .put("thumbnailId", thumbnailId)
 
     companion object {
         fun parse(json: JSONObject, fileId: String): PrivateDocument {
@@ -85,13 +87,13 @@ internal data class PrivateDocument(
                 json.optString("ocr"), (json.getJSONArray("attachments")).let { a ->
                     (0 until a.length()).map { a.getJSONObject(it).let { PrivateAttachment(it.getString("id"), it.getString("mime")) } }
                 }, json.optBoolean("deleted"), fileId, json.getInt("schemaVersion"), json.optString("lineageId"),
-                pinned = json.optBoolean("pinned"), thumbnailUrl = json.optString("thumbnailUrl"), detailsLoaded = true)
+                pinned = json.optBoolean("pinned"), thumbnailId = json.optString("thumbnailId"), detailsLoaded = true)
         }
     }
 }
 
 /** Builds a safe, content-free list item from Drive appProperties without downloading JSON. */
-internal fun privateSummaryFromProperties(fileId: String, properties: JSONObject, thumbnailUrl: String = ""): PrivateDocument? {
+internal fun privateSummaryFromProperties(fileId: String, properties: JSONObject): PrivateDocument? {
     if (properties.optString("app") != DriveMarker || properties.optString("kind") != "metadata") return null
     val id = properties.optString("listDocumentId", properties.optString("documentId"))
     val revision = properties.optString("listRevision")
@@ -100,7 +102,8 @@ internal fun privateSummaryFromProperties(fileId: String, properties: JSONObject
     return PrivateDocument(
         id = id,
         revision = revision,
-        parents = emptyList(),
+        parents = properties.optString("listParents").takeIf { it.isNotBlank() }
+            ?.split(PRIVATE_PARENT_SEPARATOR).orEmpty(),
         title = title,
         content = "",
         category = properties.optString("listCategory", "기타"),
@@ -109,9 +112,34 @@ internal fun privateSummaryFromProperties(fileId: String, properties: JSONObject
         fileId = fileId,
         remoteState = PrivateRemoteState.LEGACY_UNVERIFIED,
         pinned = properties.optString("listPinned").toBoolean(),
-        thumbnailUrl = thumbnailUrl.ifBlank { properties.optString("listThumbnail") },
+        thumbnailId = properties.optString("listThumbnailId"),
         detailsLoaded = false
     )
+}
+
+internal const val PRIVATE_PARENT_SEPARATOR = "|"
+
+/** Drive appProperties values are capped at 124 UTF-8 bytes. Never split a UTF-8 code point. */
+internal fun truncateDriveProperty(value: String, maxBytes: Int = 124): String {
+    if (value.toByteArray(Charsets.UTF_8).size <= maxBytes) return value
+    val result = StringBuilder()
+    var bytes = 0
+    for (character in value) {
+        val size = character.toString().toByteArray(Charsets.UTF_8).size
+        if (bytes + size > maxBytes) break
+        result.append(character); bytes += size
+    }
+    return result.toString()
+}
+
+internal fun summarizeDriveParents(parents: List<String>, maxBytes: Int = 124): String {
+    val result = mutableListOf<String>()
+    for (parent in parents) {
+        val candidate = (result + parent).joinToString(PRIVATE_PARENT_SEPARATOR)
+        if (candidate.toByteArray(Charsets.UTF_8).size > maxBytes) break
+        result += parent
+    }
+    return result.joinToString(PRIVATE_PARENT_SEPARATOR)
 }
 
 internal data class PendingPrivateSave(val document: PrivateDocument, val status: PrivateSyncStatus, val error: String?)
@@ -147,6 +175,9 @@ internal fun privateHeads(revisions: Collection<PrivateDocument>): List<PrivateD
     val parents = revisions.flatMap { it.parents }.toSet()
     return revisions.filter { it.revision !in parents }.sortedByDescending { it.modified }
 }
+
+internal fun privateDocumentListKey(document: PrivateDocument): String =
+    document.fileId.ifBlank { "${document.id}:${document.revision}" }
 
 /** A pin is shown only for the current, fully saved document head. */
 internal fun showsPinnedPrivateDocument(document: PrivateDocument): Boolean =

@@ -36,16 +36,45 @@ class PrivateDriveTest {
                 .put("documentId", "doc-1").put("listDocumentId", "doc-1")
                 .put("listRevision", "rev-3").put("listTitle", "냉장고 점검")
                 .put("listCategory", "냉장고").put("listCreated", "10")
-                .put("listModified", "30").put("listPinned", "true"),
-            "https://thumbnail.example/small"
+                .put("listModified", "30").put("listPinned", "true")
+                .put("listThumbnailId", "thumb-1").put("listParents", "old-revision")
         )
         assertNotNull(summary)
         assertEquals("냉장고 점검", summary!!.title)
         assertEquals("냉장고", summary.category)
         assertTrue(summary.pinned)
-        assertEquals("https://thumbnail.example/small", summary.thumbnailUrl)
+        assertEquals("thumb-1", summary.thumbnailId)
+        assertEquals(listOf("old-revision"), summary.parents)
         assertFalse(summary.detailsLoaded)
         assertTrue(summary.content.isEmpty())
+    }
+
+    @Test fun drivePropertiesAreUtf8BoundedWithoutSplittingKoreanCharacters() {
+        val title = "냉장고 필터 교체 안내 ".repeat(30)
+        val shortened = truncateDriveProperty(title)
+        assertTrue(shortened.toByteArray(Charsets.UTF_8).size <= 124)
+        assertTrue(title.startsWith(shortened))
+        assertFalse(shortened.endsWith("\uFFFD"))
+        assertTrue(summarizeDriveParents(listOf("parent-1", "parent-2")) == "parent-1|parent-2")
+    }
+
+    @Test fun summaryAndHydratedRevisionKeepSameHeadPinAndListKey() {
+        val summary = doc(id = "doc", revision = "new", parents = listOf("old"))
+            .copy(fileId = "meta", pinned = true, detailsLoaded = false, remoteState = PrivateRemoteState.LEGACY_UNVERIFIED)
+        val hydrated = summary.copy(content = "상세", detailsLoaded = true, remoteState = PrivateRemoteState.AVAILABLE)
+        assertEquals(listOf("new"), privateHeads(listOf(summary, doc(id = "doc", revision = "old"))).map { it.revision })
+        assertEquals(listOf("new"), privateHeads(listOf(hydrated, doc(id = "doc", revision = "old"))).map { it.revision })
+        assertTrue(showsPinnedPrivateDocument(summary))
+        assertTrue(showsPinnedPrivateDocument(hydrated))
+        assertEquals(privateDocumentListKey(summary), privateDocumentListKey(hydrated))
+    }
+
+    @Test fun backgroundSyncGateAllowsOnlyOneActiveScan() {
+        val gate = BackgroundSyncGate()
+        assertTrue(gate.tryAcquire())
+        assertFalse(gate.tryAcquire())
+        gate.release()
+        assertTrue(gate.tryAcquire())
     }
 
     @Test fun fullSyncPublishesFirstSummaryBeforeLaterDrivePages() = runBlocking {
@@ -475,7 +504,7 @@ class PrivateDriveTest {
         .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", "metadata").put("documentId", docId))
 
     private fun summaryFile(document: PrivateDocument) = JSONObject().put("id", document.fileId)
-        .put("version", "1").put("thumbnailLink", "https://thumbnail.example/${document.fileId}")
+        .put("version", "1")
         .put("appProperties", JSONObject().put("app", DriveMarker).put("kind", "metadata")
             .put("documentId", document.id).put("listDocumentId", document.id)
             .put("listRevision", document.revision).put("listTitle", document.title)
