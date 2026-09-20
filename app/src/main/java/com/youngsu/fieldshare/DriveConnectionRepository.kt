@@ -88,6 +88,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val backgroundSyncGate = BackgroundSyncGate()
     @Volatile private var backgroundSyncJob: Job? = null
+    @Volatile private var cleanupJob: Job? = null
 
     init {
         runCatching {
@@ -275,6 +276,7 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
         try {
             PrivateDriveSync(diagnosedApi, local, metrics).apply { sync { publish(local) }; retryCleanup() }
             success = true
+            scheduleObsoleteCleanup(local, diagnosedApi)
         } finally {
             val heads = privateHeads(local.revisions.values)
             val snapshot = metrics.snapshot()
@@ -282,10 +284,27 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
         }
     }
 
+    /** Cleanup is independent of list readiness and serialized with all store mutations. */
+    private fun scheduleObsoleteCleanup(local: PrivateDriveStore, cleanupApi: PrivateDriveApi) {
+        synchronized(this) {
+            if (cleanupJob?.isActive == true) return
+            cleanupJob = backgroundScope.launch {
+                try {
+                    mutex.withLock {
+                        cleanupObsoletePrivateDrive(cleanupApi, local)
+                        publish(local)
+                    }
+                } finally { cleanupJob = null }
+            }
+        }
+    }
+
     suspend fun disconnect() {
         check(!state.value.pendingSave) { "미완료 저장을 재시도하거나 취소한 뒤 연결을 해제해 주세요." }
         backgroundSyncJob?.cancel()
         backgroundSyncJob = null
+        cleanupJob?.cancel()
+        cleanupJob = null
         mutex.withLock {
             check(!state.value.pendingSave) { "미완료 저장을 재시도하거나 취소한 뒤 연결을 해제해 주세요." }
             val previousKey = state.value.accountKey

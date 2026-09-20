@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.UserProfileValidationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-20T09:31:49.188Z" hostname="BOCTOK-PC" time="0.002">
+<testsuite name="com.youngsu.fieldshare.UserProfileValidationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-20T09:58:26.760Z" hostname="BOCTOK-PC" time="0.001">
   <properties/>
   <testcase name="normalize_trimsValidDisplayName" classname="com.youngsu.fieldshare.UserProfileValidationTest" time="0.001"/>
   <testcase name="normalize_rejectsBlankAndTooLongDisplayNames" classname="com.youngsu.fieldshare.UserProfileValidationTest" time="0.0"/>

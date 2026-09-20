@@ -424,7 +424,7 @@ internal class PrivateDriveSync(
         var page: String? = null
             try {
                 do {
-                    val result = api.list("$appQuery and (appProperties has { key='kind' and value='metadata' } or appProperties has { key='kind' and value='lineage' })", page)
+                    val result = api.list("trashed=false and $appQuery and (appProperties has { key='kind' and value='metadata' } or appProperties has { key='kind' and value='lineage' })", page)
                     metrics.recordList(result.files.size)
                     for (file in result.files) {
                         seen += file.getString("id")

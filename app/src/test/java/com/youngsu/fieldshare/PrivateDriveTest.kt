@@ -84,6 +84,63 @@ class PrivateDriveTest {
         assertSame(refreshed, authoritativePrivateStore(null, refreshed))
     }
 
+    @Test fun cleanupPreservesHeadAndRecentTombstoneButPlansOldEvidence() {
+        val cache = MemoryCache()
+        val now = System.currentTimeMillis()
+        val head = doc(id = "doc", revision = "head", parents = listOf("old")).copy(
+            fileId = "meta-head", lineageId = "ledger-head", schemaVersion = 2,
+            attachments = listOf(PrivateAttachment("attachment-head", "image/jpeg")), thumbnailId = "thumbnail-head",
+            modified = now)
+        val old = doc(id = "doc", revision = "old").copy(
+            fileId = "meta-old", lineageId = "ledger-old", schemaVersion = 2,
+            attachments = listOf(PrivateAttachment("attachment-old", "image/jpeg")), thumbnailId = "thumbnail-old",
+            modified = now - 1)
+        val tombstone = doc(id = "deleted", revision = "tombstone").copy(
+            fileId = "meta-tombstone", lineageId = "ledger-tombstone", schemaVersion = 2,
+            deleted = true, modified = now - 1_000)
+        cache.revisions[head.fileId] = head; cache.revisions[old.fileId] = old; cache.revisions[tombstone.fileId] = tombstone
+        cache.lineages[head.fileId] = PrivateLineage.of(head)
+        cache.lineages[old.fileId] = PrivateLineage.of(old)
+        cache.lineages[tombstone.fileId] = PrivateLineage.of(tombstone)
+        val plan = planPrivateDriveCleanup(cache, now)
+        assertTrue(plan.candidates.containsAll(setOf("meta-old", "ledger-old", "attachment-old", "thumbnail-old")))
+        assertFalse(plan.candidates.any { it in setOf("meta-head", "ledger-head", "attachment-head", "thumbnail-head") })
+        assertFalse(plan.candidates.contains("meta-tombstone")); assertEquals(1, plan.preservedTombstones)
+    }
+
+    @Test fun cleanupFailureKeepsJournalAndRetryTrashesOnlyRemainingIds() = runBlocking {
+        val cache = MemoryCache(); val old = doc(id = "doc", revision = "old").copy(fileId = "meta-old", lineageId = "ledger-old")
+        val head = doc(id = "doc", revision = "head", parents = listOf("old")).copy(fileId = "meta-head", lineageId = "ledger-head")
+        cache.revisions[old.fileId] = old; cache.revisions[head.fileId] = head
+        cache.lineages[old.fileId] = PrivateLineage.of(old); cache.lineages[head.fileId] = PrivateLineage.of(head)
+        val api = FakeApi().apply { failTrash = "ledger-old" }
+        val first = cleanupObsoletePrivateDrive(api, cache)
+        assertTrue(first.failed > 0); assertTrue(File(cache.directory, "obsolete-cleanup.json").exists())
+        api.failTrash = null
+        val second = cleanupObsoletePrivateDrive(api, cache)
+        assertEquals(0, second.failed); assertFalse(File(cache.directory, "obsolete-cleanup.json").exists())
+        assertTrue(api.trashed.containsAll(listOf("meta-old", "ledger-old")))
+    }
+
+    @Test fun cleanupKeepsPendingIdsAndOnlyRemovesUnreferencedLocalCaches() = runBlocking {
+        val cache = MemoryCache(); val head = doc(id = "doc", revision = "head").copy(
+            fileId = "meta-head", thumbnailId = "thumb-head", attachments = listOf(PrivateAttachment("att-head", "image/jpeg")))
+        cache.revisions[head.fileId] = head
+        val originals = File(cache.directory, "originals").apply { mkdirs() }
+        val thumbnails = File(cache.directory, "thumbnails").apply { mkdirs() }
+        val keepOriginal = File(originals, accountCacheKey("att-head")); keepOriginal.writeText("keep")
+        val keepThumbnail = File(thumbnails, "${accountCacheKey("thumb-head")}.jpg"); keepThumbnail.writeText("keep")
+        val staleOriginal = File(originals, "stale"); staleOriginal.writeText("remove")
+        val staleThumbnail = File(thumbnails, "stale.jpg"); staleThumbnail.writeText("remove")
+        privateQueueDirectory(cache.directory).resolve("pending.json").writeText(
+            JSONObject().put("metadataId", "pending-meta").put("cleanup", JSONArray(listOf("pending-att"))).toString())
+        cleanupObsoletePrivateDrive(FakeApi(), cache)
+        assertTrue(keepOriginal.exists()); assertTrue(keepThumbnail.exists())
+        assertFalse(staleOriginal.exists()); assertFalse(staleThumbnail.exists())
+        val plan = planPrivateDriveCleanup(cache)
+        assertTrue("pending IDs are retained by planning", plan.preservedIds.containsAll(listOf("pending-meta", "pending-att")))
+    }
+
     @Test fun fullSyncPublishesFirstSummaryBeforeLaterDrivePages() = runBlocking {
         val cache = MemoryCache()
         val first = doc(id = "first", revision = "r1").copy(fileId = "first")
@@ -404,6 +461,7 @@ class PrivateDriveTest {
         assertEquals(PrivateRemoteState.MISSING, cache.revisions["f1"]?.remoteState)
         assertTrue(cache.revisions.containsKey("f2"))
         assertEquals(setOf("f1", "f2"), api.reads.toSet())
+        assertTrue(api.listQueries.first().startsWith("trashed=false and "))
         assertEquals("next", cache.checkpoint); assertTrue(progress >= 3)
     }
 
@@ -662,6 +720,7 @@ class PrivateDriveTest {
     }
     private class FakeApi : PrivateDriveApi {
         val pages = mutableMapOf<String?, DrivePage>()
+        val listQueries = mutableListOf<String>()
         val changePages = mutableMapOf<String, DrivePage>()
         val bodies = mutableMapOf<String, ByteArray>()
         val reads = mutableListOf<String>()
@@ -679,7 +738,10 @@ class PrivateDriveTest {
         val readEvents = mutableListOf<String>()
         private var activeReads = 0
         var maxConcurrentReads = 0
-        override suspend fun list(query: String, page: String?) = pages[page] ?: throw DriveFailure(503)
+        override suspend fun list(query: String, page: String?): DrivePage {
+            listQueries += query
+            return pages[page] ?: throw DriveFailure(503)
+        }
         override suspend fun startToken() = "start"
         override suspend fun changes(page: String): DrivePage {
             if (page == "expired") throw DriveFailure(410)

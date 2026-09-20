@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.youngsu.fieldshare.OcrTitleCandidateTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-09-20T09:31:48.166Z" hostname="BOCTOK-PC" time="0.011">
+<testsuite name="com.youngsu.fieldshare.OcrTitleCandidateTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-09-20T09:58:25.771Z" hostname="BOCTOK-PC" time="0.01">
   <properties/>
   <testcase name="selectOcrTitleCandidate_truncatesLongTitleNaturally" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.009"/>
   <testcase name="selectOcrTitleCandidate_returnsNullForBlankOcr" classname="com.youngsu.fieldshare.OcrTitleCandidateTest" time="0.0"/>
