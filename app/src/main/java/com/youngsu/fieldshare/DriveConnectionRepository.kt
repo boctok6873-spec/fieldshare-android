@@ -614,6 +614,24 @@ internal class DriveConnectionRepository(private val context: Context, apiOverri
             }
     }
 
+    /** Drive's small JPEG wins after sync; a local/cached original is a resilient media fallback. */
+    suspend fun listThumbnail(document: PrivateDocument): Result<File> {
+        if (document.thumbnailId.isNotBlank()) {
+            thumbnail(document).getOrNull()?.let { return Result.success(it) }
+        }
+        return mutex.withLock {
+            runCatching {
+                val attachment = firstListPreviewAttachment(document.attachments)
+                    ?: throw IllegalArgumentException("미디어 첨부파일이 없습니다.")
+                val local = store ?: throw DriveFailure(401)
+                withContext(Dispatchers.IO) {
+                    cachedPrivateListThumbnail(local.directory, attachment, cachedOriginal(local, attachment))
+                        ?: throw IllegalArgumentException("썸네일을 만들 수 없습니다.")
+                }
+            }
+        }
+    }
+
     suspend fun original(attachment: PrivateAttachment): Result<File> = operation { local ->
         val file = cachedOriginal(local, attachment)
         val viewFile = File(viewCache, "${state.value.accountKey}/${accountCacheKey(attachment.id)}")

@@ -9,6 +9,9 @@ import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -22,6 +25,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
@@ -128,6 +133,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -165,6 +171,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.time.LocalDate
 import androidx.activity.SystemBarStyle
+import androidx.compose.foundation.text.selection.SelectionContainer
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -603,15 +610,21 @@ private fun FirebaseDocumentApp(
             repository = driveRepository,
             selected = currentScreen.document,
             onBack = { if (!driveState.busy) onScreenChange(AppScreen.Home) },
-            onImageClick = { imageUri -> onScreenChange(AppScreen.PrivateImageViewer(currentScreen.document, imageUri)) },
+            onImageClick = { index -> onScreenChange(AppScreen.PrivateImageViewer(currentScreen.document, index)) },
             scope = coroutineScope
         )
-        is AppScreen.PrivateImageViewer -> FullScreenImageViewer(
-            imageUri = currentScreen.imageUri,
+        is AppScreen.PrivateImageViewer -> PrivateFullScreenImageViewer(
+            repository = driveRepository,
+            document = currentScreen.document,
+            initialPage = currentScreen.initialPage,
             onClose = { onScreenChange(AppScreen.PrivateDetail(currentScreen.document)) }
         )
         is AppScreen.ImageViewer -> FullScreenImageViewer(
-            imageUri = currentScreen.imageUri,
+            imageUris = currentScreen.document.imageUris.ifEmpty { listOfNotNull(currentScreen.document.imageUri) },
+            initialPage = imageViewerInitialPage(
+                currentScreen.document.imageUris.ifEmpty { listOfNotNull(currentScreen.document.imageUri) },
+                currentScreen.imageUri
+            ),
             onClose = { onScreenChange(AppScreen.Detail(currentScreen.document)) }
         )
         is AppScreen.EditTextDocument -> TextDocumentEditScreen(
@@ -1001,14 +1014,14 @@ private fun SoftwareInfoScreen(onBack: () -> Unit) {
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Version : FieldShare_v2.5", color = Color(0xFF5E6878))
+            Text("Version : FieldShare_v2.6", color = Color(0xFF5E6878))
             Text("Developer : Kim Young-su", color = Color(0xFF5E6878))
             Text("Development Tool : Android Studio", color = Color(0xFF5E6878))
             Text("Programming Language : Kotlin", color = Color(0xFF5E6878))
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("UI Framework : Jetpack Compose", color = Color(0xFF5E6878))
                 Text(
-                    text = "(2026. 9. 20)",
+                    text = "(2026. 10. 28)",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF8A94A6)
                 )
@@ -1026,7 +1039,7 @@ private sealed interface AppScreen {
     data object SoftwareInfo : AppScreen
     data class Detail(val document: FieldDocument) : AppScreen
     data class PrivateDetail(val document: PrivateDocument) : AppScreen
-    data class PrivateImageViewer(val document: PrivateDocument, val imageUri: String) : AppScreen
+    data class PrivateImageViewer(val document: PrivateDocument, val initialPage: Int) : AppScreen
     data class ImageViewer(val document: FieldDocument, val imageUri: String?) : AppScreen
     data class EditTextDocument(val document: FieldDocument) : AppScreen
 }
@@ -2062,6 +2075,18 @@ internal fun DocumentRegistrationScreen(
             }, { "고화질 이미지로 등록 준비가 완료되었습니다." }, {})
         }
     }
+    val multipleImagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_REGISTRATION_IMAGE_COUNT)
+    ) { uris ->
+        if (uris.isEmpty()) {
+            selectionNotice = "갤러리 선택이 취소되었습니다."
+        } else {
+            prepareImages(uris, { preparedUris ->
+                selectedImageUri = preparedUris.first().toString()
+                scannedImageUris = preparedUris.map(Uri::toString)
+            }, { "고화질 이미지 ${it}장을 등록 준비했습니다." }, {})
+        }
+    }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { saved ->
@@ -2193,14 +2218,15 @@ internal fun DocumentRegistrationScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 RegisterMethodCard(
                     title = "갤러리 선택",
-                    description = "저장된 이미지 선택",
+                    description = if (isPrivate) "저장된 이미지 선택" else "최대 ${MAX_REGISTRATION_IMAGE_COUNT}장 선택",
                     icon = Icons.Default.Image,
                     iconColor = Color(0xFF15844E),
                     background = Color(0xFFDEF1E4),
                     modifier = Modifier.weight(1f),
                     onClick = {
                         if (!isImageOptimizing && !isOcrExtracting) {
-                            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            if (isPrivate) imagePicker.launch(request) else multipleImagePicker.launch(request)
                         }
                     }
                 )
@@ -2243,8 +2269,9 @@ internal fun DocumentRegistrationScreen(
                 )
             }
 
-            if (selectedImageUri != null) {
-                RegistrationImagePreview(selectedImageUri)
+            val registrationImageUris = scannedImageUris.ifEmpty { listOfNotNull(selectedImageUri) }
+            if (registrationImageUris.isNotEmpty()) {
+                RegistrationImagePreview(registrationImageUris)
             }
 
             Spacer(Modifier.height(2.dp))
@@ -2936,7 +2963,12 @@ internal fun TextDocumentContentBody(content: String) {
         border = BorderStroke(1.dp, BorderGray),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        LinkedDocumentText(content = content, modifier = Modifier.padding(18.dp))
+        SelectionContainer {
+            LinkedDocumentText(
+                content = content,
+                modifier = Modifier.padding(18.dp)
+            )
+        }
     }
 }
 
@@ -3018,35 +3050,93 @@ private fun OriginalImagePage(imageUri: String?, onClick: (String) -> Unit) {
 }
 
 @Composable
-private fun RegistrationImagePreview(imageUri: String?) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, BorderGray),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        if (imageUri != null) {
-            SubcomposeAsyncImage(
-                model = imageUri,
-                contentDescription = "등록할 고화질 이미지 미리보기",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp),
-                contentScale = ContentScale.Fit,
-                loading = { ImageLoadingPlaceholder() },
-                error = { ImageUnavailablePlaceholder("이미지 미리보기를 불러올 수 없습니다.") }
+private fun RegistrationImagePreview(imageUris: List<String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (imageUris.size > 1) {
+            Text(
+                text = "등록할 이미지 ${imageUris.size}장",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = Ink
             )
-        } else {
-            ImageUnavailablePlaceholder("이미지 미리보기를 불러올 수 없습니다.")
+        }
+        imageUris.forEachIndexed { index, imageUri ->
+            if (imageUris.size > 1) {
+                Text("이미지 ${index + 1}", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7E8795))
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, BorderGray),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                SubcomposeAsyncImage(
+                    model = imageUri,
+                    contentDescription = "등록할 고화질 이미지 ${index + 1} 미리보기",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    contentScale = ContentScale.Fit,
+                    loading = { ImageLoadingPlaceholder() },
+                    error = { ImageUnavailablePlaceholder("이미지 미리보기를 불러올 수 없습니다.") }
+                )
+            }
         }
     }
 }
 
 private const val IMAGE_VIEWER_PAN_SPEED_MULTIPLIER = 2f
+internal const val IMAGE_VIEWER_PAGE_SWIPE_THRESHOLD_PX = 72f
+internal const val IMAGE_VIEWER_PAGE_FLING_VELOCITY_PX_PER_SECOND = 850f
+private const val MAX_REGISTRATION_IMAGE_COUNT = 10
 
 @Composable
-private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
+private fun PrivateFullScreenImageViewer(
+    repository: DriveConnectionRepository,
+    document: PrivateDocument,
+    initialPage: Int,
+    onClose: () -> Unit
+) {
+    val attachments = remember(document.fileId) { document.attachments.filter { it.mime.startsWith("image/") } }
+    val imageUris by produceState<List<String?>>(initialValue = List(attachments.size) { null }, key1 = document.fileId) {
+        val resolved = MutableList<String?>(attachments.size) { null }
+        attachments.forEachIndexed { index, attachment ->
+            resolved[index] = repository.original(attachment).getOrNull()?.let(Uri::fromFile)?.toString()
+            value = resolved.toList()
+        }
+    }
+    FullScreenImageViewer(imageUris, initialPage, onClose)
+}
+
+/** Keeps the selected image stable when a URI is missing or duplicated in an older document. */
+internal fun imageViewerInitialPage(imageUris: List<String>, selectedUri: String?): Int =
+    imageUris.indexOf(selectedUri).takeIf { it >= 0 } ?: 0
+
+/** A page turn needs a primarily-horizontal drag with either sufficient travel or a real fling. */
+internal fun imageViewerPageAfterGesture(
+    page: Int,
+    pageCount: Int,
+    dragX: Float,
+    dragY: Float,
+    durationMillis: Long,
+    distanceThreshold: Float = IMAGE_VIEWER_PAGE_SWIPE_THRESHOLD_PX,
+    flingVelocityThreshold: Float = IMAGE_VIEWER_PAGE_FLING_VELOCITY_PX_PER_SECOND
+): Int {
+    val boundedPage = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+    if (pageCount <= 1 || kotlin.math.abs(dragX) <= kotlin.math.abs(dragY) * 1.25f) return boundedPage
+    val velocity = kotlin.math.abs(dragX) * 1000f / durationMillis.coerceAtLeast(1)
+    val isLongEnough = kotlin.math.abs(dragX) >= distanceThreshold
+    val isFling = kotlin.math.abs(dragX) >= distanceThreshold / 3f && velocity >= flingVelocityThreshold
+    if (!isLongEnough && !isFling) return boundedPage
+    return when {
+        dragX < 0f -> (boundedPage + 1).coerceAtMost(pageCount - 1)
+        else -> (boundedPage - 1).coerceAtLeast(0)
+    }
+}
+
+@Composable
+private fun FullScreenImageViewer(imageUris: List<String?>, initialPage: Int, onClose: () -> Unit) {
     val activity = LocalContext.current.findActivity()
     DisposableEffect(activity) {
         val previousRequestedOrientation = activity?.requestedOrientation
@@ -3059,11 +3149,37 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
             }
         }
     }
-    var scale by remember { mutableStateOf(1f) }
+    val pageCount = imageUris.size.coerceAtLeast(1)
+    var currentPage by remember(pageCount, initialPage) {
+        mutableStateOf(initialPage.coerceIn(0, pageCount - 1))
+    }
+    val imageUri = imageUris.getOrNull(currentPage)
+    var scale by remember(currentPage) { mutableStateOf(1f) }
     var offsetX by remember { mutableStateOf(0f) }
     var offsetY by remember { mutableStateOf(0f) }
-    var rotationDegrees by remember(imageUri) { mutableStateOf(0f) }
+    var rotationDegrees by remember(currentPage) { mutableStateOf(0f) }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+    var pageIndicatorVisible by remember(pageCount) { mutableStateOf(pageCount > 1) }
+    var pageIndicatorInteraction by remember { mutableStateOf(0) }
+    fun revealPageIndicator() {
+        if (pageCount > 1) {
+            pageIndicatorVisible = true
+            pageIndicatorInteraction++
+        }
+    }
+    LaunchedEffect(currentPage) {
+        scale = 1f
+        offsetX = 0f
+        offsetY = 0f
+        rotationDegrees = 0f
+        revealPageIndicator()
+    }
+    LaunchedEffect(pageIndicatorInteraction, pageCount) {
+        if (pageCount > 1) {
+            delay(1_000)
+            pageIndicatorVisible = false
+        }
+    }
     val isQuarterTurn = ((rotationDegrees % 360f) + 360f) % 360f in setOf(90f, 270f)
     val imageFrameModifier = if (isQuarterTurn && viewportSize != IntSize.Zero) {
         with(LocalDensity.current) {
@@ -3073,6 +3189,7 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
         Modifier.fillMaxSize()
     }
     val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
+        if (zoomChange != 1f || panChange.x != 0f || panChange.y != 0f) revealPageIndicator()
         val newScale = (scale * zoomChange).coerceIn(1f, 5f)
         scale = newScale
         if (newScale <= 1f) {
@@ -3095,14 +3212,48 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        if (imageUri != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .onSizeChanged { viewportSize = it }
-                    .transformable(transformableState)
-                    .pointerInput(Unit) {
-                        detectTapGestures(onDoubleTap = {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { viewportSize = it }
+                // Observe before transformable consumes its pan events. This never consumes, so
+                // taps, double-taps, and two-finger transforms continue to reach their handlers.
+                .then(if (pageCount > 1) Modifier.pointerInput(currentPage, pageCount, scale) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val startX = down.position.x
+                        val startY = down.position.y
+                        val startTime = down.uptimeMillis
+                        var endX = startX
+                        var endY = startY
+                        var endTime = startTime
+                        var multiplePointers = false
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.count { it.pressed } > 1) multiplePointers = true
+                            val active = event.changes.firstOrNull { it.id == down.id } ?: break
+                            endX = active.position.x
+                            endY = active.position.y
+                            endTime = active.uptimeMillis
+                            if (!active.pressed) {
+                                if (!multiplePointers && scale <= 1f) {
+                                    val next = imageViewerPageAfterGesture(
+                                        currentPage, pageCount, endX - startX, endY - startY, endTime - startTime
+                                    )
+                                    if (next != currentPage) currentPage = next
+                                    revealPageIndicator()
+                                }
+                                break
+                            }
+                        }
+                    }
+                } else Modifier)
+                .transformable(transformableState)
+                .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { revealPageIndicator() },
+                            onDoubleTap = {
+                            revealPageIndicator()
                             if (scale > 1f) {
                                 scale = 1f
                                 offsetX = 0f
@@ -3113,7 +3264,8 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
                         })
                     },
                 contentAlignment = Alignment.Center
-            ) {
+        ) {
+            if (imageUri != null) {
                 SubcomposeAsyncImage(
                     model = imageUri,
                     contentDescription = "확대 가능한 원본 이미지",
@@ -3129,9 +3281,9 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
                     loading = { ImageLoadingPlaceholder() },
                     error = { ImageUnavailablePlaceholder("원본 이미지를 불러올 수 없습니다.") }
                 )
+            } else {
+                ImageUnavailablePlaceholder("원본 이미지를 불러올 수 없습니다.")
             }
-        } else {
-            ImageUnavailablePlaceholder("원본 이미지를 불러올 수 없습니다.")
         }
         Column(
             modifier = Modifier
@@ -3141,13 +3293,24 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
                 .padding(horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            AnimatedVisibility(visible = pageCount > 1 && pageIndicatorVisible, enter = fadeIn(), exit = fadeOut()) {
+                Text(
+                    text = "${currentPage + 1} / $pageCount",
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+            if (pageCount > 1 && pageIndicatorVisible) Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier
                     .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(28.dp)),
                 horizontalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 IconButton(
-                    onClick = { rotationDegrees -= 90f },
+                    onClick = { rotationDegrees -= 90f; revealPageIndicator() },
                     modifier = Modifier.size(56.dp)
                 ) {
                     Icon(
@@ -3158,7 +3321,7 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
                     )
                 }
                 IconButton(
-                    onClick = { rotationDegrees += 90f },
+                    onClick = { rotationDegrees += 90f; revealPageIndicator() },
                     modifier = Modifier.size(56.dp)
                 ) {
                     Icon(
@@ -3171,7 +3334,8 @@ private fun FullScreenImageViewer(imageUri: String?, onClose: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "두 손가락으로 확대·축소 · 두 번 탭하여 확대",
+                text = if (pageCount > 1) "스와이프로 좌우로 넘기기 · 확대·축소"
+                    else "확대·축소 ·탭하여 확대",
                 modifier = Modifier
                     .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
                     .padding(horizontal = 14.dp, vertical = 8.dp),

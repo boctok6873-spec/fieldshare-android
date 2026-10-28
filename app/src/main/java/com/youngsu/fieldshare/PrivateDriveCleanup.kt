@@ -108,7 +108,12 @@ private fun cleanupCacheFiles(directory: File, preservedIds: Set<String>): Int {
     val preservedOriginals = preservedIds.map(::accountCacheKey).toSet()
     val preservedThumbnails = preservedIds.map { "${accountCacheKey(it)}.jpg" }.toSet()
     var removed = 0
-    listOf("originals" to preservedOriginals, "thumbnails" to preservedThumbnails).forEach { (name, preserved) ->
+    listOf(
+        "originals" to preservedOriginals,
+        "thumbnails" to preservedThumbnails,
+        // Generated image/video previews are keyed by attachment ID, not Drive thumbnail ID.
+        "list-thumbnails" to preservedThumbnails
+    ).forEach { (name, preserved) ->
         val dir = File(directory, name).canonicalFile
         val root = directory.canonicalFile
         if (dir.parentFile != root || !dir.isDirectory) return@forEach

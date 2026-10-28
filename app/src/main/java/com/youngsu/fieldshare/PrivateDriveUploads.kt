@@ -9,9 +9,6 @@ import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import java.io.ByteArrayOutputStream
 
 private val accountQueueMonitors = ConcurrentHashMap<String, Any>()
 
@@ -93,21 +90,6 @@ internal fun privateFileMetadata(folder: String, documentId: String, kind: Strin
         }
     })
 
-private fun createListThumbnail(file: File): ByteArray? {
-    val source = try { BitmapFactory.decodeFile(file.path) } catch (_: RuntimeException) { null } ?: return null
-    val scale = minOf(320f / source.width, 320f / source.height, 1f)
-    val bitmap = if (scale < 1f) Bitmap.createScaledBitmap(source,
-        (source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1), true) else source
-    return try {
-        ByteArrayOutputStream().use { output ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 76, output)) null else output.toByteArray()
-        }
-    } finally {
-        if (bitmap !== source) bitmap.recycle()
-        source.recycle()
-    }
-}
-
 /** Upload the persisted transaction; never publish metadata before every attachment has succeeded. */
 internal class PrivateDriveUploads(private val api: PrivateDriveApi, private val local: PrivateMetadataCache) {
     suspend fun uploadPending(file: File = File(local.directory, "pending.json")) {
@@ -124,8 +106,8 @@ internal class PrivateDriveUploads(private val api: PrivateDriveApi, private val
         if (thumbnailId.isBlank()) {
             val source = (0 until plan.getJSONArray("attachments").length()).asSequence()
                 .map { plan.getJSONArray("attachments").getJSONObject(it) }
-                .firstOrNull { it.optString("mime").startsWith("image/") && it.optString("local").isNotBlank() }
-            val bytes = source?.let { createListThumbnail(File(file.parentFile, it.getString("local"))) }
+                .firstOrNull { (it.optString("mime").startsWith("image/") || it.optString("mime").startsWith("video/")) && it.optString("local").isNotBlank() }
+            val bytes = source?.let { createPrivateListThumbnail(File(file.parentFile, it.getString("local")), it.getString("mime")) }
             if (bytes != null) {
                 ensureQueueActive(file)
                 thumbnailId = api.generateId()

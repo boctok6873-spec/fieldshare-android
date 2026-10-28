@@ -11,6 +11,21 @@ import org.junit.Test
 
 class ImageDocumentContentTest {
     @Test
+    fun imageViewerSwipePagesOnlyWithinBoundsAndStartsAtSelectedImage() {
+        val images = listOf("first", "second", "third")
+        assertEquals(1, imageViewerInitialPage(images, "second"))
+        assertEquals(0, imageViewerInitialPage(images, "missing"))
+        assertEquals(2, imageViewerPageAfterGesture(1, images.size, -100f, 4f, 400))
+        assertEquals(0, imageViewerPageAfterGesture(1, images.size, 100f, 4f, 400))
+        assertEquals(0, imageViewerPageAfterGesture(0, images.size, 100f, 4f, 400))
+        assertEquals(2, imageViewerPageAfterGesture(2, images.size, -100f, 4f, 400))
+        assertEquals(1, imageViewerPageAfterGesture(1, images.size, -20f, 2f, 400))
+        assertEquals(1, imageViewerPageAfterGesture(1, images.size, -100f, 120f, 400))
+        assertEquals(2, imageViewerPageAfterGesture(1, images.size, -30f, 1f, 20))
+        assertEquals(0, imageViewerPageAfterGesture(0, 1, -100f, 0f, 100))
+    }
+
+    @Test
     fun contentForDocumentSave_keepsImageContentEnteredByUser() {
         assertEquals("현장 점검 내용을 기록합니다.", contentForDocumentSave(true, "현장 점검 내용을 기록합니다."))
     }

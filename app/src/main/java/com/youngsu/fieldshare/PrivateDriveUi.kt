@@ -51,7 +51,7 @@ import kotlinx.coroutines.CoroutineScope
 import java.text.DateFormat
 import java.util.Date
 
-internal const val PRIVATE_PIN_ROTATION_DEGREES = 35f
+internal const val PRIVATE_PIN_ROTATION_DEGREES = -35f
 internal const val PRIVATE_PIN_COLOR_ARGB = 0xFFC62828
 
 @Composable
@@ -225,7 +225,7 @@ internal fun PrivateDocumentDetailScreen(
     repository: DriveConnectionRepository,
     selected: PrivateDocument,
     onBack: () -> Unit,
-    onImageClick: (String) -> Unit,
+    onImageClick: (Int) -> Unit,
     scope: CoroutineScope
 ) {
     val state by repository.state.collectAsState()
@@ -352,11 +352,7 @@ internal fun PrivateDocumentDetailScreen(
                             if (imageAttachments.size > 1) {
                                 Text("페이지 ${index + 1}", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7E8795))
                             }
-                            PrivateDetailImage(repository, attachment, document.title, onClick = {
-                                scope.launch {
-                                    repository.original(attachment).onSuccess { file -> onImageClick(Uri.fromFile(file).toString()) }
-                                }
-                            })
+                            PrivateDetailImage(repository, attachment, document.title, onClick = { onImageClick(index) })
                         }
                         Text("이미지를 누르면 전체 화면에서 확대·축소할 수 있습니다.",
                             style = MaterialTheme.typography.bodySmall, color = Color(0xFF7E8795))
@@ -527,8 +523,8 @@ internal fun resolvePrivateDetailDocument(selected: PrivateDocument, heads: Coll
 
 @Composable
 private fun PrivateThumbnail(repository: DriveConnectionRepository, document: PrivateDocument) {
-    val file by produceState<java.io.File?>(initialValue = null, key1 = document.thumbnailId) {
-        value = if (document.thumbnailId.isBlank()) null else repository.thumbnail(document).getOrNull()
+    val file by produceState<java.io.File?>(initialValue = null, key1 = document.fileId, key2 = document.thumbnailId) {
+        value = repository.listThumbnail(document).getOrNull()
     }
     Surface(
         modifier = Modifier.size(width = 96.dp, height = 104.dp),

@@ -15,6 +15,22 @@ class PrivateDriveTest {
     private fun doc(id: String = "one", revision: String = id, parents: List<String> = emptyList()) = PrivateDocument(
         id, revision, parents, "냉장고 RF85A", "필터  교체\nhttps://example.com/123", "냉장고", 1, 2, "모델 AB1234 점검")
 
+    @Test fun listThumbnailFallbackUsesFirstMediaAndLeavesPdfAndTextAsDocumentIcons() {
+        val pdfOnly = listOf(PrivateAttachment("manual", "application/pdf"))
+        val media = listOf(
+            PrivateAttachment("manual", "application/pdf"),
+            PrivateAttachment("clip", "video/mp4"),
+            PrivateAttachment("photo", "image/jpeg")
+        )
+
+        assertNull(firstListPreviewAttachment(pdfOnly))
+        assertEquals("clip", firstListPreviewAttachment(media)?.id)
+        assertTrue(PrivateAttachment("photo", "image/png").isListPreviewable())
+        assertTrue(PrivateAttachment("clip", "video/mp4").isListPreviewable())
+        assertFalse(PrivateAttachment("manual", "application/pdf").isListPreviewable())
+        assertFalse(PrivateAttachment("note", "text/plain").isListPreviewable())
+    }
+
     @Test fun privateSyncButtonTracksQueuedUploadAndPreventsDuplicateSync() {
         val waiting = DriveUiState(pendingSave = true, pendingSyncStatus = PrivateSyncStatus.WAITING)
         val syncing = DriveUiState(pendingSave = true, pendingSyncStatus = PrivateSyncStatus.SYNCING)
@@ -131,15 +147,18 @@ class PrivateDriveTest {
         cache.revisions[head.fileId] = head
         val originals = File(cache.directory, "originals").apply { mkdirs() }
         val thumbnails = File(cache.directory, "thumbnails").apply { mkdirs() }
+        val listThumbnails = File(cache.directory, "list-thumbnails").apply { mkdirs() }
         val keepOriginal = File(originals, accountCacheKey("att-head")); keepOriginal.writeText("keep")
         val keepThumbnail = File(thumbnails, "${accountCacheKey("thumb-head")}.jpg"); keepThumbnail.writeText("keep")
+        val keepListThumbnail = File(listThumbnails, "${accountCacheKey("att-head")}.jpg"); keepListThumbnail.writeText("keep")
         val staleOriginal = File(originals, "stale"); staleOriginal.writeText("remove")
         val staleThumbnail = File(thumbnails, "stale.jpg"); staleThumbnail.writeText("remove")
+        val staleListThumbnail = File(listThumbnails, "stale.jpg"); staleListThumbnail.writeText("remove")
         privateQueueDirectory(cache.directory).resolve("pending.json").writeText(
             JSONObject().put("metadataId", "pending-meta").put("cleanup", JSONArray(listOf("pending-att"))).toString())
         cleanupObsoletePrivateDrive(FakeApi(), cache)
-        assertTrue(keepOriginal.exists()); assertTrue(keepThumbnail.exists())
-        assertFalse(staleOriginal.exists()); assertFalse(staleThumbnail.exists())
+        assertTrue(keepOriginal.exists()); assertTrue(keepThumbnail.exists()); assertTrue(keepListThumbnail.exists())
+        assertFalse(staleOriginal.exists()); assertFalse(staleThumbnail.exists()); assertFalse(staleListThumbnail.exists())
         val plan = planPrivateDriveCleanup(cache)
         assertTrue("pending IDs are retained by planning", plan.preservedIds.containsAll(listOf("pending-meta", "pending-att")))
     }
